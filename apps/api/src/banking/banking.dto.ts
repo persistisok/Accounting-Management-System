@@ -19,6 +19,16 @@ export class CreateTransactionDto {
   @IsOptional() @IsEnum(SourceType) sourceType?: SourceType;
 }
 
+export class UpdateTransactionDto {
+  @IsOptional() @IsUUID() bankAccountId?: string;
+  @IsOptional() @IsString() @MaxLength(100) transactionNo?: string;
+  @IsOptional() @IsDateString() transactionAt?: string;
+  @IsOptional() @IsString() @MaxLength(200) counterpartyName?: string;
+  @IsOptional() @IsEnum(TransactionDirection) direction?: TransactionDirection;
+  @IsOptional() @IsNumberString() amount?: string;
+  @IsOptional() @IsString() @MaxLength(100) nature?: string;
+}
+
 export class CreateAllocationDto {
   @IsOptional() @IsUUID() projectId?: string;
   @IsOptional() @IsUUID() memberDueId?: string;

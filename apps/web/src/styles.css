@@ -155,6 +155,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .pm-identity small { color: var(--muted); font-size: 10px; margin-top: 3px; }
 .allocation-list { display: flex; flex-direction: column; gap: 3px; min-width: 180px; }
 .allocation-list small { color: var(--ink-soft); font-size: 10px; }
+.allocation-editor { background: var(--paper-deep); border: 1px solid var(--line); border-radius: 8px; margin-bottom: 18px; padding: 8px 10px; }
+.allocation-editor > span { align-items: center; display: flex; gap: 12px; justify-content: space-between; }
 .state-block, .empty-state { align-items: center; color: var(--muted); display: flex; gap: 9px; justify-content: center; min-height: 220px; }
 .state-block.error { color: var(--seal); }
 .empty-state { flex-direction: column; text-align: center; }
@@ -302,6 +304,9 @@ textarea.control { min-height: 82px; resize: vertical; }
 .committee-strip small { color: #70b9a8; font-family: var(--data); font-size: 9px; grid-column: span 2; margin-bottom: 6px; }
 .committee-strip strong { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .committee-strip b { color: #a5b8bc; font-size: 9px; font-weight: 500; }
+.committee-actions { display: flex; gap: 8px; grid-column: span 2; margin-top: 9px; }
+.committee-actions button { background: transparent; border: 0; color: #91c8bc; cursor: pointer; font-size: 10px; padding: 0; }
+.committee-actions button:last-child { color: #e2a7a2; }
 
 /* Responsive */
 @media (max-width: 1180px) {

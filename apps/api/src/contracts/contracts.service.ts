@@ -2,7 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { ContractStatus, Prisma } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
 import { PrismaService } from '../prisma.service';
-import { ContractListQueryDto, CreateContractDto } from './contracts.dto';
+import { ContractListQueryDto, CreateContractDto, UpdateContractDto } from './contracts.dto';
 
 @Injectable()
 export class ContractsService {
@@ -37,28 +37,7 @@ export class ContractsService {
   }
 
   async create(dto: CreateContractDto, actorUserId: string) {
-    if (Number(dto.amount) <= 0) throw new BadRequestException('合同金额必须大于零');
-    const expectedRole = dto.contractType === 'SUPPORT' ? 'SUPPORTER' : dto.contractType === 'EXECUTION' ? 'EXECUTOR' : null;
-    if (dto.contractType === 'SUPPORT' && dto.contractDirection !== 'RECEIVABLE') {
-      throw new BadRequestException('支持协议必须是应收方向');
-    }
-    if (dto.contractType === 'EXECUTION' && dto.contractDirection !== 'PAYABLE') {
-      throw new BadRequestException('执行协议必须是应付方向');
-    }
-    if (expectedRole) {
-      const role = await this.prisma.organizationRole.findUnique({
-        where: { organizationId_roleType: { organizationId: dto.counterpartyId, roleType: expectedRole } },
-      });
-      if (!role) throw new BadRequestException(expectedRole === 'SUPPORTER' ? '请选择支持方' : '请选择执行方');
-    }
-    if (dto.contractType === 'EXECUTION') {
-      const candidate = await this.prisma.projectExecutorCandidate.findUnique({
-        where: { projectId_organizationId: { projectId: dto.projectId, organizationId: dto.counterpartyId } },
-      });
-      if (!candidate || candidate.selectionStatus !== 'SELECTED') {
-        throw new BadRequestException('只有已中选的执行方可以登记执行协议');
-      }
-    }
+    await this.validateBusinessRules(dto);
     const contract = await this.prisma.contract.create({
       data: {
         ...dto,
@@ -76,6 +55,37 @@ export class ContractsService {
     return contract;
   }
 
+  async update(id: string, dto: UpdateContractDto, actorUserId: string) {
+    const before = await this.prisma.contract.findUnique({ where: { id } });
+    if (!before) throw new NotFoundException('合同不存在');
+    if (before.status === 'VOID' || before.status === 'TERMINATED') throw new BadRequestException('已作废或终止的合同不能编辑');
+    const merged = {
+      contractType: dto.contractType ?? before.contractType,
+      contractDirection: dto.contractDirection ?? before.contractDirection,
+      counterpartyId: dto.counterpartyId ?? before.counterpartyId,
+      projectId: dto.projectId ?? before.projectId,
+      amount: dto.amount ?? before.amount.toString(),
+    };
+    await this.validateBusinessRules(merged);
+    const contract = await this.prisma.contract.update({
+      where: { id },
+      data: {
+        ...dto,
+        ...(dto.signedOn ? { signedOn: new Date(dto.signedOn) } : {}),
+        ...(dto.effectiveOn ? { effectiveOn: new Date(dto.effectiveOn) } : {}),
+        ...(dto.expiresOn ? { expiresOn: new Date(dto.expiresOn) } : {}),
+        version: { increment: 1 },
+      },
+      include: { project: { select: { id: true, projectCode: true, name: true } }, counterparty: true },
+    });
+    await this.audit.record({
+      actorUserId, action: 'UPDATE', objectType: 'CONTRACT', objectId: id,
+      beforeData: { contractNo: before.contractNo, amount: before.amount.toString(), status: before.status },
+      afterData: { contractNo: contract.contractNo, amount: contract.amount.toString(), status: contract.status },
+    });
+    return contract;
+  }
+
   async setStatus(id: string, status: ContractStatus, actorUserId: string) {
     const before = await this.prisma.contract.findUnique({ where: { id } });
     if (!before) throw new NotFoundException('合同不存在');
@@ -85,5 +95,26 @@ export class ContractsService {
       beforeData: { status: before.status }, afterData: { status },
     });
     return contract;
+  }
+
+  private async validateBusinessRules(dto: {
+    contractType: string; contractDirection: string; counterpartyId: string; projectId: string; amount: string;
+  }) {
+    if (Number(dto.amount) <= 0) throw new BadRequestException('合同金额必须大于零');
+    const expectedRole = dto.contractType === 'SUPPORT' ? 'SUPPORTER' : dto.contractType === 'EXECUTION' ? 'EXECUTOR' : null;
+    if (dto.contractType === 'SUPPORT' && dto.contractDirection !== 'RECEIVABLE') throw new BadRequestException('支持协议必须是应收方向');
+    if (dto.contractType === 'EXECUTION' && dto.contractDirection !== 'PAYABLE') throw new BadRequestException('执行协议必须是应付方向');
+    if (expectedRole) {
+      const role = await this.prisma.organizationRole.findFirst({
+        where: { organizationId: dto.counterpartyId, roleType: expectedRole, reviewStatus: 'APPROVED', organization: { status: 'ACTIVE' } },
+      });
+      if (!role) throw new BadRequestException(expectedRole === 'SUPPORTER' ? '请选择有效支持方' : '请选择有效执行方');
+    }
+    if (dto.contractType === 'EXECUTION') {
+      const candidate = await this.prisma.projectExecutorCandidate.findUnique({
+        where: { projectId_organizationId: { projectId: dto.projectId, organizationId: dto.counterpartyId } },
+      });
+      if (!candidate || candidate.selectionStatus !== 'SELECTED') throw new BadRequestException('只有已中选的执行方可以登记执行协议');
+    }
   }
 }

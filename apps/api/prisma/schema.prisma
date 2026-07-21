@@ -377,6 +377,7 @@ model ExpertProfile {
   formOwnerId          String       @map("form_owner_id") @db.Uuid
   reviewerId           String?      @map("reviewer_id") @db.Uuid
   reviewStatus         ReviewStatus @default(PENDING) @map("review_status")
+  status               RecordStatus @default(ACTIVE)
   createdAt            DateTime     @default(now()) @map("created_at")
   updatedAt            DateTime     @updatedAt @map("updated_at")
 
@@ -385,7 +386,7 @@ model ExpertProfile {
   reviewer    User?            @relation("ExpertReviewer", fields: [reviewerId], references: [id])
   allocations BankAllocation[]
 
-  @@index([reviewStatus, joinedOn])
+  @@index([status, reviewStatus, joinedOn])
   @@map("expert_profiles")
 }
 

@@ -22,3 +22,17 @@ export class CreateInvoiceDto {
   @IsOptional() @IsEnum(InvoiceKind) kind?: InvoiceKind;
   @IsOptional() @IsUUID() originalInvoiceId?: string;
 }
+
+export class UpdateInvoiceDto {
+  @IsOptional() @IsString() @MaxLength(32) invoiceCode?: string;
+  @IsOptional() @IsString() @MaxLength(64) invoiceNumber?: string;
+  @IsOptional() @IsUUID() projectId?: string;
+  @IsOptional() @IsDateString() issuedOn?: string;
+  @IsOptional() @IsString() @MaxLength(30) invoiceType?: string;
+  @IsOptional() @IsString() @MaxLength(100) invoicePlatform?: string;
+  @IsOptional() @IsString() @MaxLength(200) buyerName?: string;
+  @IsOptional() @IsNumberString() amountExcludingTax?: string;
+  @IsOptional() @IsNumberString() taxRate?: string;
+  @IsOptional() @IsNumberString() taxAmount?: string;
+  @IsOptional() @IsNumberString() totalAmount?: string;
+}

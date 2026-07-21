@@ -23,3 +23,17 @@ export class CreateContractDto {
   @IsOptional() @IsUUID() parentContractId?: string;
   @IsOptional() @IsString() @MaxLength(1000) remark?: string;
 }
+
+export class UpdateContractDto {
+  @IsOptional() @IsString() @MaxLength(64) contractNo?: string;
+  @IsOptional() @IsUUID() projectId?: string;
+  @IsOptional() @IsEnum(ContractDirection) contractDirection?: ContractDirection;
+  @IsOptional() @IsEnum(ContractType) contractType?: ContractType;
+  @IsOptional() @IsString() @MaxLength(200) contractEntity?: string;
+  @IsOptional() @IsUUID() counterpartyId?: string;
+  @IsOptional() @IsNumberString() amount?: string;
+  @IsOptional() @IsDateString() signedOn?: string;
+  @IsOptional() @IsDateString() effectiveOn?: string;
+  @IsOptional() @IsDateString() expiresOn?: string;
+  @IsOptional() @IsString() @MaxLength(1000) remark?: string;
+}

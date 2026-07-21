@@ -1,9 +1,9 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
 import { AuthUser, CurrentUser } from '../common/current-user.decorator';
-import { CreateInvoiceDto, InvoiceListQueryDto } from './invoices.dto';
+import { CreateInvoiceDto, InvoiceListQueryDto, UpdateInvoiceDto } from './invoices.dto';
 import { InvoicesService } from './invoices.service';
 
 @Controller('invoices')
@@ -17,6 +17,12 @@ export class InvoicesController {
   @Post()
   @Roles('ADMIN', 'FINANCE')
   create(@Body() dto: CreateInvoiceDto, @CurrentUser() user: AuthUser) { return this.invoices.create(dto, user.id); }
+
+  @Patch(':id')
+  @Roles('ADMIN', 'FINANCE')
+  update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateInvoiceDto, @CurrentUser() user: AuthUser) {
+    return this.invoices.update(id, dto, user.id);
+  }
 
   @Post(':id/void')
   @Roles('ADMIN', 'FINANCE')

@@ -55,6 +55,7 @@ export interface Organization {
   contactName?: string;
   contactPhone?: string;
   status: string;
+  ownerUserId?: string;
   owner: User;
   cumulativeAmount?: string;
   roles?: { roleType: string }[];
@@ -64,6 +65,7 @@ export interface Candidate {
   id: string;
   selectionStatus: string;
   selectedOn?: string;
+  remark?: string;
   organization: Organization;
 }
 
@@ -73,9 +75,12 @@ export interface Contract {
   contractDirection: string;
   contractType: string;
   contractEntity: string;
+  projectId?: string;
+  counterpartyId?: string;
   amount: string;
   signedOn: string;
   status: string;
+  remark?: string;
   project: Pick<Project, 'id' | 'projectCode' | 'name'>;
   counterparty: Pick<Organization, 'id' | 'organizationCode' | 'name'>;
 }
@@ -92,6 +97,7 @@ export interface BankAllocation {
 export interface BankTransaction {
   id: string;
   transactionNo?: string;
+  bankAccountId: string;
   transactionAt: string;
   counterpartyName: string;
   direction: 'IN' | 'OUT';
@@ -99,6 +105,7 @@ export interface BankTransaction {
   nature: string;
   settlementApplicable: boolean;
   matchStatus: string;
+  sourceType: string;
   bankAccount: { accountName: string; accountNumberMasked: string };
   allocations: BankAllocation[];
 }
@@ -107,6 +114,7 @@ export interface Invoice {
   id: string;
   invoiceCode?: string;
   invoiceNumber: string;
+  projectId?: string;
   issuedOn: string;
   invoiceType: string;
   invoicePlatform: string;
@@ -127,6 +135,7 @@ export interface Expert {
   bankAccountMasked?: string;
   joinedOn: string;
   reviewStatus: string;
+  status: string;
   person: {
     id: string;
     name: string;
@@ -146,6 +155,8 @@ export interface Committee {
   committeeCode: string;
   name: string;
   establishedOn: string;
+  ownerUserId?: string;
+  status?: string;
   owner: User;
   _count?: { memberships: number };
 }
@@ -164,6 +175,8 @@ export interface Membership {
   id: string;
   memberName: string;
   memberType: string;
+  committeeId?: string;
+  pmUserId?: string;
   joinedOn?: string;
   status: string;
   committee: Committee;

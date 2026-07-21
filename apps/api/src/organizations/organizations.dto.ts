@@ -1,4 +1,4 @@
-import { OrganizationRoleType, SelectionStatus } from '@prisma/client';
+import { OrganizationRoleType, RecordStatus, SelectionStatus } from '@prisma/client';
 import { IsEnum, IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
 import { ListQueryDto } from '../common/query.dto';
 
@@ -17,9 +17,24 @@ export class CreateOrganizationDto {
   @IsEnum(OrganizationRoleType) roleType!: OrganizationRoleType;
 }
 
+export class UpdateOrganizationDto {
+  @IsOptional() @IsString() @MaxLength(200) name?: string;
+  @IsOptional() @IsString() @MaxLength(32) creditCode?: string;
+  @IsOptional() @IsString() @MaxLength(100) platform?: string;
+  @IsOptional() @IsUUID() ownerUserId?: string;
+  @IsOptional() @IsString() @MaxLength(100) contactName?: string;
+  @IsOptional() @IsString() @MaxLength(30) contactPhone?: string;
+  @IsOptional() @IsEnum(RecordStatus) status?: RecordStatus;
+}
+
 export class CreateCandidateDto {
   @IsUUID() projectId!: string;
   @IsUUID() organizationId!: string;
+  @IsOptional() @IsEnum(SelectionStatus) selectionStatus?: SelectionStatus;
+  @IsOptional() @IsString() @MaxLength(1000) remark?: string;
+}
+
+export class UpdateCandidateDto {
   @IsOptional() @IsEnum(SelectionStatus) selectionStatus?: SelectionStatus;
   @IsOptional() @IsString() @MaxLength(1000) remark?: string;
 }

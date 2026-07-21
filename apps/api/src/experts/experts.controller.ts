@@ -1,9 +1,9 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
 import { AuthUser, CurrentUser } from '../common/current-user.decorator';
-import { CreateExpertDto, ExpertListQueryDto, ReviewExpertDto } from './experts.dto';
+import { CreateExpertDto, ExpertListQueryDto, ReviewExpertDto, UpdateExpertDto } from './experts.dto';
 import { ExpertsService } from './experts.service';
 
 @Controller('experts')
@@ -20,6 +20,18 @@ export class ExpertsController {
   @Post()
   @Roles('ADMIN', 'PM')
   create(@Body() dto: CreateExpertDto, @CurrentUser() user: AuthUser) { return this.experts.create(dto, user.id); }
+
+  @Patch(':id')
+  @Roles('ADMIN', 'PM')
+  update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateExpertDto, @CurrentUser() user: AuthUser) {
+    return this.experts.update(id, dto, user.id);
+  }
+
+  @Delete(':id')
+  @Roles('ADMIN', 'COMPLIANCE')
+  deactivate(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: AuthUser) {
+    return this.experts.deactivate(id, user.id);
+  }
 
   @Post(':id/review')
   @Roles('ADMIN', 'REVIEWER', 'COMPLIANCE')

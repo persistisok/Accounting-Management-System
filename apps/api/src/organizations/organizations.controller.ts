@@ -1,10 +1,10 @@
-import { Body, Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { OrganizationRoleType } from '@prisma/client';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
 import { AuthUser, CurrentUser } from '../common/current-user.decorator';
-import { CreateCandidateDto, CreateOrganizationDto, OrganizationListQueryDto } from './organizations.dto';
+import { CreateCandidateDto, CreateOrganizationDto, OrganizationListQueryDto, UpdateCandidateDto, UpdateOrganizationDto } from './organizations.dto';
 import { OrganizationsService } from './organizations.service';
 
 @Controller('organizations')
@@ -24,9 +24,33 @@ export class OrganizationsController {
     return this.organizations.create(dto, user.id);
   }
 
+  @Patch(':id')
+  @Roles('ADMIN', 'PM', 'COMPLIANCE')
+  update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateOrganizationDto, @CurrentUser() user: AuthUser) {
+    return this.organizations.update(id, dto, user.id);
+  }
+
+  @Delete(':id')
+  @Roles('ADMIN', 'COMPLIANCE')
+  deactivate(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: AuthUser) {
+    return this.organizations.deactivate(id, user.id);
+  }
+
   @Post('executor-candidates')
   @Roles('ADMIN', 'PM', 'COMPLIANCE')
   addCandidate(@Body() dto: CreateCandidateDto, @CurrentUser() user: AuthUser) {
     return this.organizations.addCandidate(dto, user.id);
+  }
+
+  @Patch('executor-candidates/:id')
+  @Roles('ADMIN', 'PM', 'COMPLIANCE')
+  updateCandidate(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateCandidateDto, @CurrentUser() user: AuthUser) {
+    return this.organizations.updateCandidate(id, dto, user.id);
+  }
+
+  @Delete('executor-candidates/:id')
+  @Roles('ADMIN', 'PM', 'COMPLIANCE')
+  withdrawCandidate(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: AuthUser) {
+    return this.organizations.withdrawCandidate(id, user.id);
   }
 }

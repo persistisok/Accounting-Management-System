@@ -1,10 +1,10 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
 import { AuthUser, CurrentUser } from '../common/current-user.decorator';
 import { BankingService } from './banking.service';
-import { CreateAllocationDto, CreateTransactionDto, TransactionListQueryDto } from './banking.dto';
+import { CreateAllocationDto, CreateTransactionDto, TransactionListQueryDto, UpdateTransactionDto } from './banking.dto';
 
 @Controller('banking')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -21,6 +21,18 @@ export class BankingController {
   @Roles('ADMIN', 'FINANCE')
   create(@Body() dto: CreateTransactionDto, @CurrentUser() user: AuthUser) {
     return this.banking.createTransaction(dto, user.id);
+  }
+
+  @Patch('transactions/:id')
+  @Roles('ADMIN', 'FINANCE')
+  update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateTransactionDto, @CurrentUser() user: AuthUser) {
+    return this.banking.updateTransaction(id, dto, user.id);
+  }
+
+  @Delete('transactions/:id')
+  @Roles('ADMIN', 'FINANCE')
+  exclude(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: AuthUser) {
+    return this.banking.excludeTransaction(id, user.id);
   }
 
   @Post('transactions/:id/allocations')

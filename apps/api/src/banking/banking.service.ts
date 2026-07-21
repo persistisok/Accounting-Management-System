@@ -2,7 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { AllocationCategory, MatchStatus, Prisma } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
 import { PrismaService } from '../prisma.service';
-import { CreateAllocationDto, CreateTransactionDto, TransactionListQueryDto } from './banking.dto';
+import { CreateAllocationDto, CreateTransactionDto, TransactionListQueryDto, UpdateTransactionDto } from './banking.dto';
 
 const incomeCategories: AllocationCategory[] = ['SUPPORT_RECEIPT', 'MEMBER_DUE'];
 const expenseCategories: AllocationCategory[] = ['EXECUTION_PAYMENT', 'EXPERT_FEE'];
@@ -64,6 +64,45 @@ export class BankingService {
     await this.audit.record({
       actorUserId, action: 'CREATE', objectType: 'BANK_TRANSACTION', objectId: transaction.id,
       afterData: { direction: transaction.direction, amount: transaction.amount.toString(), counterpartyName: transaction.counterpartyName },
+    });
+    return transaction;
+  }
+
+  async updateTransaction(id: string, dto: UpdateTransactionDto, actorUserId: string) {
+    const before = await this.prisma.bankTransaction.findUnique({
+      where: { id }, include: { allocations: { where: { status: 'CONFIRMED' }, select: { id: true } } },
+    });
+    if (!before) throw new NotFoundException('银行流水不存在');
+    if (before.sourceType !== 'MANUAL') throw new BadRequestException('导入的原始流水不能编辑');
+    if (!before.settlementApplicable) throw new BadRequestException('已排除的流水不能编辑');
+    if (before.allocations.length) throw new BadRequestException('已有分配的流水不能编辑，请先撤销全部分配');
+    if (dto.amount !== undefined && Number(dto.amount) <= 0) throw new BadRequestException('流水金额必须大于零');
+    const transaction = await this.prisma.bankTransaction.update({
+      where: { id },
+      data: { ...dto, ...(dto.transactionAt ? { transactionAt: new Date(dto.transactionAt) } : {}), matchStatus: 'UNMATCHED' },
+      include: { bankAccount: true, allocations: true },
+    });
+    await this.audit.record({
+      actorUserId, action: 'UPDATE', objectType: 'BANK_TRANSACTION', objectId: id,
+      beforeData: { amount: before.amount.toString(), counterpartyName: before.counterpartyName },
+      afterData: { amount: transaction.amount.toString(), counterpartyName: transaction.counterpartyName },
+    });
+    return transaction;
+  }
+
+  async excludeTransaction(id: string, actorUserId: string) {
+    const before = await this.prisma.bankTransaction.findUnique({
+      where: { id }, include: { allocations: { where: { status: 'CONFIRMED' }, select: { id: true } } },
+    });
+    if (!before) throw new NotFoundException('银行流水不存在');
+    if (before.allocations.length) throw new BadRequestException('已有分配的流水不能删除，请先撤销全部分配');
+    const transaction = await this.prisma.bankTransaction.update({
+      where: { id }, data: { settlementApplicable: false, matchStatus: 'EXCLUDED' },
+      include: { bankAccount: true, allocations: true },
+    });
+    await this.audit.record({
+      actorUserId, action: 'DELETE', objectType: 'BANK_TRANSACTION', objectId: id,
+      beforeData: { matchStatus: before.matchStatus }, afterData: { matchStatus: transaction.matchStatus },
     });
     return transaction;
   }

@@ -1,9 +1,9 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
 import { AuthUser, CurrentUser } from '../common/current-user.decorator';
-import { ContractListQueryDto, CreateContractDto } from './contracts.dto';
+import { ContractListQueryDto, CreateContractDto, UpdateContractDto } from './contracts.dto';
 import { ContractsService } from './contracts.service';
 
 @Controller('contracts')
@@ -18,6 +18,12 @@ export class ContractsController {
   @Roles('ADMIN', 'PM', 'COMPLIANCE')
   create(@Body() dto: CreateContractDto, @CurrentUser() user: AuthUser) {
     return this.contracts.create(dto, user.id);
+  }
+
+  @Patch(':id')
+  @Roles('ADMIN', 'PM', 'COMPLIANCE')
+  update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateContractDto, @CurrentUser() user: AuthUser) {
+    return this.contracts.update(id, dto, user.id);
   }
 
   @Post(':id/sign')
