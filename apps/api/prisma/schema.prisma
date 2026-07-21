@@ -1,0 +1,476 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  PM
+  FINANCE
+  COMPLIANCE
+  REVIEWER
+  VIEWER
+}
+
+enum RecordStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum ProjectStatus {
+  DRAFT
+  ACTIVE
+  CLOSED
+  CANCELLED
+}
+
+enum OrganizationRoleType {
+  SUPPORTER
+  EXECUTOR
+}
+
+enum ReviewStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum SelectionStatus {
+  CANDIDATE
+  SELECTED
+  NOT_SELECTED
+  WITHDRAWN
+}
+
+enum ContractDirection {
+  RECEIVABLE
+  PAYABLE
+}
+
+enum ContractType {
+  SUPPORT
+  EXECUTION
+  OTHER
+}
+
+enum ContractStatus {
+  DRAFT
+  SIGNED
+  TERMINATED
+  VOID
+}
+
+enum TransactionDirection {
+  IN
+  OUT
+}
+
+enum MatchStatus {
+  UNMATCHED
+  PARTIAL
+  MATCHED
+  EXCLUDED
+}
+
+enum SourceType {
+  MANUAL
+  EXCEL
+  BANK_FILE
+}
+
+enum AllocationCategory {
+  SUPPORT_RECEIPT
+  EXECUTION_PAYMENT
+  EXPERT_FEE
+  MEMBER_DUE
+  OTHER
+}
+
+enum AllocationStatus {
+  DRAFT
+  CONFIRMED
+  REVERSED
+}
+
+enum InvoiceKind {
+  BLUE
+  RED
+}
+
+enum InvoiceStatus {
+  NORMAL
+  VOID
+}
+
+enum DueStatus {
+  UNPAID
+  PARTIAL
+  PAID
+  WAIVED
+}
+
+model User {
+  id           String       @id @default(uuid()) @db.Uuid
+  username     String       @unique @db.VarChar(64)
+  passwordHash String       @map("password_hash")
+  displayName  String       @map("display_name") @db.VarChar(100)
+  department   String?      @db.VarChar(100)
+  role         UserRole
+  status       RecordStatus @default(ACTIVE)
+  createdAt    DateTime     @default(now()) @map("created_at")
+  updatedAt    DateTime     @updatedAt @map("updated_at")
+
+  projects      Project[]      @relation("ProjectManager")
+  organizations Organization[] @relation("OrganizationOwner")
+  committees    Committee[]    @relation("CommitteeOwner")
+  memberships   Membership[]   @relation("MembershipManager")
+  expertForms   ExpertProfile[] @relation("ExpertFormOwner")
+  expertReviews ExpertProfile[] @relation("ExpertReviewer")
+
+  @@map("users")
+}
+
+model Project {
+  id              String        @id @default(uuid()) @db.Uuid
+  projectCode     String        @unique @map("project_code") @db.VarChar(32)
+  platform        String        @db.VarChar(100)
+  publishedOn     DateTime      @map("published_on") @db.Date
+  name            String        @db.VarChar(200)
+  nature          String        @db.VarChar(50)
+  periodMonths    Int           @map("period_months")
+  approvedAmount  Decimal       @map("approved_amount") @db.Decimal(18, 2)
+  executionCost   Decimal       @map("execution_cost") @db.Decimal(18, 2)
+  pmName          String        @map("pm_name") @db.VarChar(100)
+  pmUserId        String?       @map("pm_user_id") @db.Uuid
+  status          ProjectStatus @default(ACTIVE)
+  remark          String?
+  version         Int           @default(1)
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+
+  pm         User?                      @relation("ProjectManager", fields: [pmUserId], references: [id])
+  contracts  Contract[]
+  allocations BankAllocation[]
+  invoices   Invoice[]
+  candidates ProjectExecutorCandidate[]
+
+  @@index([pmUserId, status])
+  @@map("projects")
+}
+
+model ProjectCodeCounter {
+  year       Int      @id
+  nextNumber Int      @map("next_number")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@map("project_code_counters")
+}
+
+model Organization {
+  id               String       @id @default(uuid()) @db.Uuid
+  organizationCode String       @unique @map("organization_code") @db.VarChar(32)
+  name             String       @db.VarChar(200)
+  normalizedName   String       @map("normalized_name") @db.VarChar(200)
+  creditCode       String?      @unique @map("credit_code") @db.VarChar(32)
+  platform         String       @db.VarChar(100)
+  ownerUserId      String       @map("owner_user_id") @db.Uuid
+  contactName      String?      @map("contact_name") @db.VarChar(100)
+  contactPhone     String?      @map("contact_phone") @db.VarChar(30)
+  status           RecordStatus @default(ACTIVE)
+  version          Int          @default(1)
+  createdAt        DateTime     @default(now()) @map("created_at")
+  updatedAt        DateTime     @updatedAt @map("updated_at")
+
+  owner      User                       @relation("OrganizationOwner", fields: [ownerUserId], references: [id])
+  roles      OrganizationRole[]
+  contracts  Contract[]
+  candidates ProjectExecutorCandidate[]
+
+  @@index([normalizedName])
+  @@map("organizations")
+}
+
+model OrganizationRole {
+  id             String               @id @default(uuid()) @db.Uuid
+  organizationId String               @map("organization_id") @db.Uuid
+  roleType       OrganizationRoleType @map("role_type")
+  joinedOn       DateTime             @default(now()) @map("joined_on") @db.Date
+  reviewStatus   ReviewStatus         @default(APPROVED) @map("review_status")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+
+  @@unique([organizationId, roleType])
+  @@index([roleType, reviewStatus])
+  @@map("organization_roles")
+}
+
+model ProjectExecutorCandidate {
+  id               String          @id @default(uuid()) @db.Uuid
+  projectId        String          @map("project_id") @db.Uuid
+  organizationId   String          @map("organization_id") @db.Uuid
+  selectionStatus  SelectionStatus @default(CANDIDATE) @map("selection_status")
+  selectedOn       DateTime?       @map("selected_on") @db.Date
+  remark           String?
+  createdAt        DateTime        @default(now()) @map("created_at")
+  updatedAt        DateTime        @updatedAt @map("updated_at")
+
+  project      Project      @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+
+  @@unique([projectId, organizationId])
+  @@map("project_executor_candidates")
+}
+
+model Contract {
+  id                String            @id @default(uuid()) @db.Uuid
+  contractNo        String            @unique @map("contract_no") @db.VarChar(64)
+  projectId         String            @map("project_id") @db.Uuid
+  contractDirection ContractDirection @map("contract_direction")
+  contractType      ContractType      @map("contract_type")
+  contractEntity    String            @map("contract_entity") @db.VarChar(200)
+  counterpartyId    String            @map("counterparty_id") @db.Uuid
+  amount            Decimal           @db.Decimal(18, 2)
+  signedOn          DateTime          @map("signed_on") @db.Date
+  effectiveOn       DateTime?         @map("effective_on") @db.Date
+  expiresOn         DateTime?         @map("expires_on") @db.Date
+  status            ContractStatus    @default(DRAFT)
+  parentContractId  String?           @map("parent_contract_id") @db.Uuid
+  remark            String?
+  version           Int               @default(1)
+  createdAt         DateTime          @default(now()) @map("created_at")
+  updatedAt         DateTime          @updatedAt @map("updated_at")
+
+  project        Project      @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  counterparty   Organization @relation(fields: [counterpartyId], references: [id], onDelete: Restrict)
+  parentContract Contract?    @relation("ContractVersions", fields: [parentContractId], references: [id], onDelete: Restrict)
+  supplements    Contract[]   @relation("ContractVersions")
+
+  @@index([projectId, status, contractType])
+  @@map("contracts")
+}
+
+model BankAccount {
+  id                     String       @id @default(uuid()) @db.Uuid
+  accountName            String       @map("account_name") @db.VarChar(200)
+  bankName               String       @map("bank_name") @db.VarChar(200)
+  accountNumberEncrypted String       @map("account_number_encrypted")
+  accountNumberMasked    String       @map("account_number_masked") @db.VarChar(64)
+  status                 RecordStatus @default(ACTIVE)
+  createdAt              DateTime     @default(now()) @map("created_at")
+  updatedAt              DateTime     @updatedAt @map("updated_at")
+
+  transactions BankTransaction[]
+
+  @@map("bank_accounts")
+}
+
+model BankTransaction {
+  id                        String               @id @default(uuid()) @db.Uuid
+  bankAccountId             String               @map("bank_account_id") @db.Uuid
+  transactionNo             String?              @map("transaction_no") @db.VarChar(100)
+  transactionAt             DateTime             @map("transaction_at")
+  counterpartyName          String               @map("counterparty_name") @db.VarChar(200)
+  counterpartyAccountMasked String?              @map("counterparty_account_masked") @db.VarChar(64)
+  direction                 TransactionDirection
+  amount                    Decimal              @db.Decimal(18, 2)
+  nature                    String               @db.VarChar(100)
+  settlementApplicable      Boolean              @default(true) @map("settlement_applicable")
+  matchStatus               MatchStatus          @default(UNMATCHED) @map("match_status")
+  sourceType                SourceType           @default(MANUAL) @map("source_type")
+  sourceRowHash             String?              @unique @map("source_row_hash") @db.VarChar(64)
+  rawData                   Json?                 @map("raw_data")
+  createdAt                 DateTime             @default(now()) @map("created_at")
+  updatedAt                 DateTime             @updatedAt @map("updated_at")
+
+  bankAccount BankAccount      @relation(fields: [bankAccountId], references: [id], onDelete: Restrict)
+  allocations BankAllocation[]
+
+  @@index([transactionAt, direction, matchStatus])
+  @@map("bank_transactions")
+}
+
+model BankAllocation {
+  id                String             @id @default(uuid()) @db.Uuid
+  bankTransactionId String             @map("bank_transaction_id") @db.Uuid
+  projectId         String?            @map("project_id") @db.Uuid
+  memberDueId       String?            @map("member_due_id") @db.Uuid
+  expertProfileId   String?            @map("expert_profile_id") @db.Uuid
+  category          AllocationCategory
+  allocatedAmount   Decimal            @map("allocated_amount") @db.Decimal(18, 2)
+  status            AllocationStatus   @default(DRAFT)
+  confirmedBy       String?            @map("confirmed_by") @db.Uuid
+  confirmedAt       DateTime?          @map("confirmed_at")
+  createdAt         DateTime           @default(now()) @map("created_at")
+  updatedAt         DateTime           @updatedAt @map("updated_at")
+
+  bankTransaction BankTransaction @relation(fields: [bankTransactionId], references: [id], onDelete: Restrict)
+  project         Project?         @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  memberDue       MemberDue?       @relation(fields: [memberDueId], references: [id], onDelete: Restrict)
+  expertProfile   ExpertProfile?   @relation(fields: [expertProfileId], references: [id], onDelete: Restrict)
+
+  @@index([projectId, category, status])
+  @@map("bank_allocations")
+}
+
+model Invoice {
+  id                 String        @id @default(uuid()) @db.Uuid
+  invoiceCode        String?       @map("invoice_code") @db.VarChar(32)
+  invoiceNumber      String        @map("invoice_number") @db.VarChar(64)
+  projectId          String        @map("project_id") @db.Uuid
+  issuedOn           DateTime      @map("issued_on") @db.Date
+  invoiceType        String        @map("invoice_type") @db.VarChar(30)
+  invoicePlatform    String        @map("invoice_platform") @db.VarChar(100)
+  buyerName          String        @map("buyer_name") @db.VarChar(200)
+  amountExcludingTax Decimal       @map("amount_excluding_tax") @db.Decimal(18, 2)
+  taxRate            Decimal       @map("tax_rate") @db.Decimal(8, 6)
+  taxAmount          Decimal       @map("tax_amount") @db.Decimal(18, 2)
+  totalAmount        Decimal       @map("total_amount") @db.Decimal(18, 2)
+  kind               InvoiceKind   @default(BLUE)
+  status             InvoiceStatus @default(NORMAL)
+  originalInvoiceId  String?       @map("original_invoice_id") @db.Uuid
+  version            Int           @default(1)
+  createdAt          DateTime      @default(now()) @map("created_at")
+  updatedAt          DateTime      @updatedAt @map("updated_at")
+
+  project         Project   @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  originalInvoice Invoice?  @relation("InvoiceReversal", fields: [originalInvoiceId], references: [id], onDelete: Restrict)
+  redInvoices      Invoice[] @relation("InvoiceReversal")
+
+  @@unique([invoiceCode, invoiceNumber])
+  @@index([projectId, status, issuedOn])
+  @@map("invoices")
+}
+
+model Person {
+  id                    String   @id @default(uuid()) @db.Uuid
+  name                  String   @db.VarChar(100)
+  phoneEncrypted        String?  @map("phone_encrypted")
+  phoneMasked           String?  @map("phone_masked") @db.VarChar(30)
+  idNumberEncrypted     String?  @map("id_number_encrypted")
+  idNumberHash          String?  @unique @map("id_number_hash") @db.VarChar(64)
+  idNumberMasked        String?  @map("id_number_masked") @db.VarChar(32)
+  email                 String?  @db.VarChar(200)
+  organizationName      String?  @map("organization_name") @db.VarChar(200)
+  department            String?  @db.VarChar(100)
+  position              String?  @db.VarChar(100)
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @updatedAt @map("updated_at")
+
+  expertProfile ExpertProfile?
+
+  @@index([name])
+  @@map("persons")
+}
+
+model ExpertProfile {
+  id                   String       @id @default(uuid()) @db.Uuid
+  personId             String       @unique @map("person_id") @db.Uuid
+  professionalTitle    String?      @map("professional_title") @db.VarChar(100)
+  bankName             String?      @map("bank_name") @db.VarChar(200)
+  bankAccountEncrypted String?      @map("bank_account_encrypted")
+  bankAccountMasked    String?      @map("bank_account_masked") @db.VarChar(64)
+  joinedOn             DateTime     @default(now()) @map("joined_on") @db.Date
+  formOwnerId          String       @map("form_owner_id") @db.Uuid
+  reviewerId           String?      @map("reviewer_id") @db.Uuid
+  reviewStatus         ReviewStatus @default(PENDING) @map("review_status")
+  createdAt            DateTime     @default(now()) @map("created_at")
+  updatedAt            DateTime     @updatedAt @map("updated_at")
+
+  person      Person           @relation(fields: [personId], references: [id], onDelete: Restrict)
+  formOwner   User             @relation("ExpertFormOwner", fields: [formOwnerId], references: [id])
+  reviewer    User?            @relation("ExpertReviewer", fields: [reviewerId], references: [id])
+  allocations BankAllocation[]
+
+  @@index([reviewStatus, joinedOn])
+  @@map("expert_profiles")
+}
+
+model Committee {
+  id            String       @id @default(uuid()) @db.Uuid
+  committeeCode String       @unique @map("committee_code") @db.VarChar(32)
+  name          String       @db.VarChar(200)
+  establishedOn DateTime     @map("established_on") @db.Date
+  ownerUserId   String       @map("owner_user_id") @db.Uuid
+  status        RecordStatus @default(ACTIVE)
+  createdAt     DateTime     @default(now()) @map("created_at")
+  updatedAt     DateTime     @updatedAt @map("updated_at")
+
+  owner       User         @relation("CommitteeOwner", fields: [ownerUserId], references: [id])
+  memberships Membership[]
+
+  @@map("committees")
+}
+
+model Membership {
+  id           String       @id @default(uuid()) @db.Uuid
+  memberName   String       @map("member_name") @db.VarChar(200)
+  committeeId  String       @map("committee_id") @db.Uuid
+  memberType   String       @map("member_type") @db.VarChar(50)
+  pmUserId     String       @map("pm_user_id") @db.Uuid
+  joinedOn     DateTime?    @map("joined_on") @db.Date
+  status       RecordStatus @default(ACTIVE)
+  createdAt    DateTime     @default(now()) @map("created_at")
+  updatedAt    DateTime     @updatedAt @map("updated_at")
+
+  committee Committee   @relation(fields: [committeeId], references: [id], onDelete: Restrict)
+  pm        User        @relation("MembershipManager", fields: [pmUserId], references: [id])
+  dues      MemberDue[]
+
+  @@index([committeeId, memberName])
+  @@map("memberships")
+}
+
+model MemberDue {
+  id           String    @id @default(uuid()) @db.Uuid
+  membershipId String    @map("membership_id") @db.Uuid
+  dueCode      String    @unique @map("due_code") @db.VarChar(32)
+  periodLabel  String?   @map("period_label") @db.VarChar(50)
+  amountDue    Decimal   @map("amount_due") @db.Decimal(18, 2)
+  dueOn        DateTime? @map("due_on") @db.Date
+  status       DueStatus @default(UNPAID)
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  membership Membership      @relation(fields: [membershipId], references: [id], onDelete: Restrict)
+  allocations BankAllocation[]
+
+  @@index([membershipId, status])
+  @@map("member_dues")
+}
+
+model Attachment {
+  id          String   @id @default(uuid()) @db.Uuid
+  objectType  String   @map("object_type") @db.VarChar(30)
+  objectId    String   @map("object_id") @db.Uuid
+  fileName    String   @map("file_name") @db.VarChar(255)
+  storageKey  String   @map("storage_key") @db.VarChar(500)
+  contentType String   @map("content_type") @db.VarChar(100)
+  sizeBytes   BigInt   @map("size_bytes")
+  sha256      String   @db.VarChar(64)
+  uploadedBy  String   @map("uploaded_by") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([objectType, objectId])
+  @@map("attachments")
+}
+
+model AuditLog {
+  id          String   @id @default(uuid()) @db.Uuid
+  actorUserId String?  @map("actor_user_id") @db.Uuid
+  action      String   @db.VarChar(30)
+  objectType  String   @map("object_type") @db.VarChar(50)
+  objectId    String   @map("object_id") @db.Uuid
+  beforeData  Json?    @map("before_data")
+  afterData   Json?    @map("after_data")
+  requestId   String?  @map("request_id") @db.VarChar(64)
+  ipAddress   String?  @map("ip_address") @db.VarChar(64)
+  occurredAt  DateTime @default(now()) @map("occurred_at")
+
+  @@index([objectType, objectId, occurredAt])
+  @@index([actorUserId, occurredAt])
+  @@map("audit_logs")
+}
