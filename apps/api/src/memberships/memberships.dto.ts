@@ -6,6 +6,8 @@ export class MembershipListQueryDto extends ListQueryDto {
   @IsOptional() @IsUUID() committeeId?: string;
 }
 
+export class CommitteeListQueryDto extends ListQueryDto {}
+
 export class CreateCommitteeDto {
   @IsString() @MaxLength(32) committeeCode!: string;
   @IsString() @MaxLength(200) name!: string;

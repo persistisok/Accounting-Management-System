@@ -13,12 +13,13 @@ function context(role: string) {
 
 describe('RolesGuard', () => {
   it('allows a configured role', () => {
-    const reflector = { getAllAndOverride: vi.fn().mockReturnValue(['ADMIN', 'FINANCE']) } as unknown as Reflector;
-    expect(new RolesGuard(reflector).canActivate(context('FINANCE'))).toBe(true);
+    const reflector = { getAllAndOverride: vi.fn().mockReturnValue(['SYSTEM_ADMIN', 'ADMIN']) } as unknown as Reflector;
+    expect(new RolesGuard(reflector).canActivate(context('SYSTEM_ADMIN'))).toBe(true);
+    expect(new RolesGuard(reflector).canActivate(context('ADMIN'))).toBe(true);
   });
 
   it('rejects a role outside the configured set', () => {
-    const reflector = { getAllAndOverride: vi.fn().mockReturnValue(['FINANCE']) } as unknown as Reflector;
-    expect(() => new RolesGuard(reflector).canActivate(context('VIEWER'))).toThrow(ForbiddenException);
+    const reflector = { getAllAndOverride: vi.fn().mockReturnValue(['ADMIN']) } as unknown as Reflector;
+    expect(() => new RolesGuard(reflector).canActivate(context('GUEST'))).toThrow(ForbiddenException);
   });
 });

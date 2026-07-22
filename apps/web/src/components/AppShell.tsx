@@ -1,13 +1,13 @@
 import {
-  BookOpenText, BriefcaseBusiness, Building2, ChevronLeft, CircleGauge, FileSignature,
-  Landmark, LogOut, Menu, ReceiptText, Search, ShieldCheck, UserRoundCog, UsersRound, X,
+  BookOpenText, BriefcaseBusiness, Building2, ChevronLeft, FileSignature,
+  KeyRound, Landmark, LogOut, Menu, ReceiptText, Search, ShieldCheck, UserRoundCog, UsersRound, X,
 } from 'lucide-react';
 import { useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
 
 const groups = [
-  { label: '工作', items: [{ to: '/', label: '工作台', icon: CircleGauge }, { to: '/projects', label: '项目台账', icon: BriefcaseBusiness }] },
+  { label: '项目管理', items: [{ to: '/projects', label: '项目台账', icon: BriefcaseBusiness }] },
   { label: '业务台账', items: [
     { to: '/contracts', label: '合同台账', icon: FileSignature },
     { to: '/banking', label: '银行日记账', icon: Landmark },
@@ -26,9 +26,15 @@ export function AppShell() {
   const [search, setSearch] = useState('');
   const { user, logout } = useAuth();
   const navigate = useNavigate();
-  const visibleGroups = user?.role === 'ADMIN'
-    ? [...groups, { label: '系统管理', items: [{ to: '/project-managers', label: 'PM 管理', icon: UserRoundCog }] }]
-    : groups;
+  const systemItems = user?.role === 'SYSTEM_ADMIN'
+    ? [
+      { to: '/project-managers', label: 'PM 管理', icon: UserRoundCog },
+      { to: '/accounts', label: '账号管理', icon: KeyRound },
+    ]
+    : user?.role === 'ADMIN'
+      ? [{ to: '/project-managers', label: 'PM 管理', icon: UserRoundCog }]
+      : [];
+  const visibleGroups = systemItems.length ? [...groups, { label: '系统管理', items: systemItems }] : groups;
 
   function globalSearch(event: React.FormEvent) {
     event.preventDefault();
@@ -47,7 +53,7 @@ export function AppShell() {
           <section className="nav-group" key={group.label}>
             <p>{group.label}</p>
             {group.items.map(({ to, label, icon: Icon }) => (
-              <NavLink key={to} to={to} end={to === '/'} onClick={() => setMenuOpen(false)}>
+              <NavLink key={to} to={to} onClick={() => setMenuOpen(false)}>
                 <Icon size={18} strokeWidth={1.8} /><span>{label}</span><ChevronLeft className="nav-arrow" size={14} />
               </NavLink>
             ))}
@@ -55,7 +61,7 @@ export function AppShell() {
         ))}</nav>
         <div className="sidebar-foot">
           <span className="user-avatar">{user?.displayName.slice(0, 1)}</span>
-          <span><strong>{user?.displayName}</strong><small>{user?.role}</small></span>
+          <span><strong>{user?.displayName}</strong><small>{user?.role === 'SYSTEM_ADMIN' ? '系统管理员' : user?.role === 'ADMIN' ? '普通管理员' : '访客'}</small></span>
           <button onClick={logout} aria-label="退出登录"><LogOut size={17} /></button>
         </div>
       </aside>

@@ -1,25 +1,54 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
 import { PrismaService } from '../prisma.service';
-import { CreateCommitteeDto, CreateMemberDueDto, CreateMembershipDto, MembershipListQueryDto, UpdateCommitteeDto, UpdateMemberDueDto, UpdateMembershipDto } from './memberships.dto';
+import { CommitteeListQueryDto, CreateCommitteeDto, CreateMemberDueDto, CreateMembershipDto, MembershipListQueryDto, UpdateCommitteeDto, UpdateMemberDueDto, UpdateMembershipDto } from './memberships.dto';
 
 @Injectable()
 export class MembershipsService {
   constructor(private readonly prisma: PrismaService, private readonly audit: AuditService) {}
 
-  committees() {
+  async committees(query: CommitteeListQueryDto) {
+    const where: Prisma.CommitteeWhereInput = {
+      status: 'ACTIVE',
+      ...(query.q ? { OR: [
+        { committeeCode: { contains: query.q, mode: 'insensitive' } },
+        { name: { contains: query.q, mode: 'insensitive' } },
+      ] } : {}),
+    };
+    const [items, total] = await this.prisma.$transaction([
+      this.prisma.committee.findMany({
+        where,
+        include: { owner: { select: { displayName: true } }, _count: { select: { memberships: true } } },
+        orderBy: { establishedOn: 'desc' },
+        skip: (query.page - 1) * query.pageSize,
+        take: query.pageSize,
+      }),
+      this.prisma.committee.count({ where }),
+    ]);
+    return { items, total };
+  }
+
+  committeeOptions() {
     return this.prisma.committee.findMany({
-      where: { status: 'ACTIVE' }, include: { owner: { select: { displayName: true } }, _count: { select: { memberships: true } } },
-      orderBy: { establishedOn: 'desc' },
+      where: { status: 'ACTIVE' },
+      select: { id: true, committeeCode: true, name: true },
+      orderBy: { name: 'asc' },
     });
   }
 
   async createCommittee(dto: CreateCommitteeDto, actorUserId: string) {
+    const data = { ...dto, committeeCode: dto.committeeCode.trim(), name: dto.name.trim() };
     await this.requireActivePm(dto.ownerUserId);
-    const committee = await this.prisma.committee.create({
-      data: { ...dto, establishedOn: new Date(dto.establishedOn) }, include: { owner: true },
-    });
+    await this.requireUniqueCommittee(data.committeeCode, data.name);
+    let committee;
+    try {
+      committee = await this.prisma.committee.create({
+        data: { ...data, establishedOn: new Date(dto.establishedOn) }, include: { owner: true },
+      });
+    } catch (error) {
+      this.rethrowCommitteeConflict(error, data.committeeCode, data.name);
+    }
     await this.audit.record({
       actorUserId, action: 'CREATE', objectType: 'COMMITTEE', objectId: committee.id,
       afterData: { committeeCode: committee.committeeCode, name: committee.name },
@@ -31,10 +60,18 @@ export class MembershipsService {
     const before = await this.prisma.committee.findUnique({ where: { id } });
     if (!before) throw new NotFoundException('专委会不存在');
     if (dto.ownerUserId) await this.requireActivePm(dto.ownerUserId);
-    const committee = await this.prisma.committee.update({
-      where: { id }, data: { ...dto, ...(dto.establishedOn ? { establishedOn: new Date(dto.establishedOn) } : {}) },
-      include: { owner: { select: { id: true, displayName: true } }, _count: { select: { memberships: true } } },
-    });
+    const committeeCode = dto.committeeCode?.trim() ?? before.committeeCode;
+    const name = dto.name?.trim() ?? before.name;
+    await this.requireUniqueCommittee(committeeCode, name, id);
+    let committee;
+    try {
+      committee = await this.prisma.committee.update({
+        where: { id }, data: { ...dto, committeeCode, name, ...(dto.establishedOn ? { establishedOn: new Date(dto.establishedOn) } : {}) },
+        include: { owner: { select: { id: true, displayName: true } }, _count: { select: { memberships: true } } },
+      });
+    } catch (error) {
+      this.rethrowCommitteeConflict(error, committeeCode, name);
+    }
     await this.audit.record({ actorUserId, action: 'UPDATE', objectType: 'COMMITTEE', objectId: id, beforeData: { name: before.name, status: before.status }, afterData: { name: committee.name, status: committee.status } });
     return committee;
   }
@@ -61,9 +98,11 @@ export class MembershipsService {
         include: {
           committee: true,
           pm: { select: { id: true, displayName: true } },
+          _count: { select: { dues: true } },
           dues: {
             include: { allocations: { where: { status: 'CONFIRMED' }, select: { allocatedAmount: true, confirmedAt: true } } },
-            orderBy: { dueOn: 'desc' },
+            orderBy: [{ dueOn: 'desc' }, { createdAt: 'desc' }],
+            take: 1,
           },
         },
         orderBy: { createdAt: 'desc' },
@@ -80,6 +119,30 @@ export class MembershipsService {
           amountPaid: due.allocations.reduce((sum, allocation) => sum + Number(allocation.allocatedAmount), 0).toFixed(2),
           lastPaidAt: due.allocations.map((allocation) => allocation.confirmedAt).filter(Boolean).sort().at(-1) ?? null,
         })),
+      })),
+      total,
+    };
+  }
+
+  async memberDues(membershipId: string, query: { page: number; pageSize: number }) {
+    const membership = await this.prisma.membership.findUnique({ where: { id: membershipId }, select: { id: true } });
+    if (!membership) throw new NotFoundException('会员不存在');
+    const where: Prisma.MemberDueWhereInput = { membershipId };
+    const [items, total] = await this.prisma.$transaction([
+      this.prisma.memberDue.findMany({
+        where,
+        include: { allocations: { where: { status: 'CONFIRMED' }, select: { allocatedAmount: true, confirmedAt: true } } },
+        orderBy: [{ dueOn: 'desc' }, { createdAt: 'desc' }],
+        skip: (query.page - 1) * query.pageSize,
+        take: query.pageSize,
+      }),
+      this.prisma.memberDue.count({ where }),
+    ]);
+    return {
+      items: items.map((due) => ({
+        ...due,
+        amountPaid: due.allocations.reduce((sum, allocation) => sum + Number(allocation.allocatedAmount), 0).toFixed(2),
+        lastPaidAt: due.allocations.map((allocation) => allocation.confirmedAt).filter(Boolean).sort().at(-1) ?? null,
       })),
       total,
     };
@@ -160,13 +223,61 @@ export class MembershipsService {
     });
   }
 
+  async paymentOptions() {
+    const memberships = await this.prisma.membership.findMany({
+      where: { status: 'ACTIVE' },
+      select: {
+        id: true, memberName: true,
+        committee: { select: { committeeCode: true, name: true } },
+        dues: {
+          where: { status: { in: ['UNPAID', 'PARTIAL'] } },
+          select: { amountDue: true, allocations: { where: { status: 'CONFIRMED' }, select: { allocatedAmount: true } } },
+        },
+      },
+      orderBy: { memberName: 'asc' },
+    });
+    return memberships.map((membership) => ({
+      id: membership.id,
+      memberName: membership.memberName,
+      committee: membership.committee,
+      outstandingAmount: membership.dues.reduce((total, due) => {
+        const paid = due.allocations.reduce((sum, allocation) => sum + Number(allocation.allocatedAmount), 0);
+        return total + Math.max(0, Number(due.amountDue) - paid);
+      }, 0).toFixed(2),
+      dueCount: membership.dues.length,
+    }));
+  }
+
   private async requireActivePm(id: string) {
-    const pm = await this.prisma.user.findFirst({ where: { id, role: 'PM', status: 'ACTIVE' }, select: { id: true } });
+    const pm = await this.prisma.projectManager.findFirst({ where: { id, status: 'ACTIVE' }, select: { id: true } });
     if (!pm) throw new NotFoundException('负责 PM 不存在或已停用');
   }
 
   private async requireActiveCommittee(id: string) {
     const committee = await this.prisma.committee.findFirst({ where: { id, status: 'ACTIVE' }, select: { id: true } });
     if (!committee) throw new NotFoundException('专委会不存在或已停用');
+  }
+
+  private async requireUniqueCommittee(committeeCode: string, name: string, excludeId?: string) {
+    const duplicate = await this.prisma.committee.findFirst({
+      where: {
+        ...(excludeId ? { id: { not: excludeId } } : {}),
+        OR: [
+          { committeeCode },
+          { name: { equals: name, mode: 'insensitive' } },
+        ],
+      },
+      select: { committeeCode: true, name: true },
+    });
+    if (!duplicate) return;
+    if (duplicate.committeeCode === committeeCode) throw new ConflictException(`专委会编码“${committeeCode}”已存在`);
+    throw new ConflictException(`专委会名称“${name}”已存在`);
+  }
+
+  private rethrowCommitteeConflict(error: unknown, committeeCode: string, name: string): never {
+    if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2002') throw error;
+    const target = Array.isArray(error.meta?.target) ? error.meta.target.map(String) : [];
+    if (target.some((field) => field.includes('name'))) throw new ConflictException(`专委会名称“${name}”已存在`);
+    throw new ConflictException(`专委会编码“${committeeCode}”已存在`);
   }
 }

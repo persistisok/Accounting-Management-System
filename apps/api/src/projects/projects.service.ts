@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { ContractStatus, InvoiceStatus, Prisma, ProjectStatus } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
+import { attachmentMap } from '../attachments/attachment-view';
 import { roundMoney } from '../common/money';
 import { PrismaService } from '../prisma.service';
 import { CreateProjectDto, ProjectListQueryDto, ProjectPeriodUnit, UpdateProjectDto } from './projects.dto';
@@ -66,17 +67,27 @@ export class ProjectsService {
       }),
       this.prisma.project.count({ where }),
     ]);
-    const summaries = await this.summaries(items.map((item) => item.id));
-    return { items: items.map((item) => ({ ...item, financialSummary: summaries[item.id] ?? emptySummary() })), total };
+    const ids = items.map((item) => item.id);
+    const [summaries, attachments] = await Promise.all([
+      this.summaries(ids),
+      attachmentMap(this.prisma, 'PROJECT', ids),
+    ]);
+    return {
+      items: items.map((item) => ({
+        ...item,
+        financialSummary: summaries[item.id] ?? emptySummary(),
+        attachments: attachments[item.id] ?? [],
+      })),
+      total,
+    };
   }
 
   async options() {
-    const users = await this.prisma.user.findMany({
-      where: { status: 'ACTIVE', role: 'PM' },
-      select: { id: true, displayName: true, role: true },
-      orderBy: { displayName: 'asc' },
+    return this.prisma.project.findMany({
+      where: { status: 'ACTIVE' },
+      select: { id: true, projectCode: true, name: true },
+      orderBy: [{ publishedOn: 'desc' }, { projectCode: 'desc' }],
     });
-    return { users };
   }
 
   async findOne(id: string) {
@@ -90,12 +101,14 @@ export class ProjectsService {
           include: { bankTransaction: true, expertProfile: { include: { person: true } } },
           orderBy: { createdAt: 'desc' },
         },
-        candidates: { include: { organization: true }, orderBy: { createdAt: 'desc' } },
       },
     });
     if (!project) throw new NotFoundException('项目不存在');
-    const financialSummary = await this.summary(id);
-    return { ...project, financialSummary };
+    const [financialSummary, attachments] = await Promise.all([
+      this.summary(id),
+      attachmentMap(this.prisma, 'PROJECT', [id]),
+    ]);
+    return { ...project, financialSummary, attachments: attachments[id] ?? [] };
   }
 
   async create(dto: CreateProjectDto, actorUserId: string) {
@@ -128,7 +141,7 @@ export class ProjectsService {
       actorUserId, action: 'CREATE', objectType: 'PROJECT', objectId: project.id,
       afterData: { projectCode: project.projectCode, name: project.name },
     });
-    return { ...project, financialSummary: emptySummary() };
+    return { ...project, financialSummary: emptySummary(), attachments: [] };
   }
 
   async update(id: string, dto: UpdateProjectDto, actorUserId: string) {
@@ -154,7 +167,11 @@ export class ProjectsService {
       beforeData: { name: before.name, status: before.status },
       afterData: { name: project.name, status: project.status },
     });
-    return { ...project, financialSummary: await this.summary(id) };
+    const [financialSummary, attachments] = await Promise.all([
+      this.summary(id),
+      attachmentMap(this.prisma, 'PROJECT', [id]),
+    ]);
+    return { ...project, financialSummary, attachments: attachments[id] ?? [] };
   }
 
   async timeline(id: string) {
@@ -237,12 +254,12 @@ export class ProjectsService {
   }
 
   private async findActivePm(id: string) {
-    const user = await this.prisma.user.findFirst({
-      where: { id, displayName: { not: '' }, status: 'ACTIVE', role: 'PM' },
+    const projectManager = await this.prisma.projectManager.findFirst({
+      where: { id, displayName: { not: '' }, status: 'ACTIVE' },
       select: { id: true, displayName: true },
     });
-    if (!user) throw new BadRequestException('请选择有效的 PM');
-    return user;
+    if (!projectManager) throw new BadRequestException('请选择有效的 PM');
+    return projectManager;
   }
 
 }

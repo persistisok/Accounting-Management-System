@@ -102,6 +102,8 @@ services:
     command: ["npm", "run", "prisma:seed", "-w", "@ledger/api"]
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-ledger}:${POSTGRES_PASSWORD:-ledger-local-password}@postgres:5432/${POSTGRES_DB:-business_ledger}?schema=public
+      JWT_SECRET: ${JWT_SECRET:-local-development-jwt-secret-change-before-production}
+      FIELD_ENCRYPTION_KEY: ${FIELD_ENCRYPTION_KEY:-local-field-encryption-secret-change-before-production}
     depends_on:
       postgres:
         condition: service_healthy

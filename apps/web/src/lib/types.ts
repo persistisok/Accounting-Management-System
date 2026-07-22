@@ -1,16 +1,36 @@
 export interface User {
   id: string;
-  username?: string;
+  username: string;
   displayName: string;
-  role: string;
+  role: 'SYSTEM_ADMIN' | 'ADMIN' | 'GUEST';
+  projectManagerId: string | null;
+  projectManager?: ProjectManager | null;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProjectManager {
+  id: string;
+  displayName: string;
   department?: string;
-  status?: string;
+  status: string;
   createdAt?: string;
   updatedAt?: string;
   _count?: { projects: number };
 }
 
 export interface ListResponse<T> { items: T[]; total: number }
+
+export type LedgerAttachmentObjectType = 'PROJECT' | 'CONTRACT' | 'BANK_TRANSACTION' | 'INVOICE';
+
+export interface LedgerAttachment {
+  id: string;
+  fileName: string;
+  contentType: string;
+  sizeBytes: string;
+  createdAt: string;
+}
 
 export interface FinancialSummary {
   receivableAmount: string;
@@ -38,12 +58,12 @@ export interface Project {
   pmUserId?: string;
   status: string;
   remark?: string;
-  pm?: User;
+  pm?: ProjectManager;
   financialSummary: FinancialSummary;
+  attachments: LedgerAttachment[];
   contracts?: Contract[];
   allocations?: BankAllocation[];
   invoices?: Invoice[];
-  candidates?: Candidate[];
 }
 
 export interface Organization {
@@ -55,17 +75,9 @@ export interface Organization {
   contactPhone?: string;
   status: string;
   ownerUserId?: string;
-  owner: User;
+  owner: ProjectManager;
   cumulativeAmount?: string;
   roles?: { roleType: string }[];
-}
-
-export interface Candidate {
-  id: string;
-  selectionStatus: string;
-  selectedOn?: string;
-  remark?: string;
-  organization: Organization;
 }
 
 export interface Contract {
@@ -82,6 +94,7 @@ export interface Contract {
   remark?: string;
   project: Pick<Project, 'id' | 'projectCode' | 'name'>;
   counterparty: Pick<Organization, 'id' | 'organizationCode' | 'name'>;
+  attachments: LedgerAttachment[];
 }
 
 export interface BankAllocation {
@@ -91,6 +104,7 @@ export interface BankAllocation {
   status: string;
   project?: Pick<Project, 'id' | 'projectCode' | 'name'>;
   expertProfile?: { id: string; person: { name: string } };
+  memberDue?: { id: string; dueCode: string; periodLabel?: string; membership: { id: string; memberName: string; committee?: { name: string } } };
 }
 
 export interface BankTransaction {
@@ -99,20 +113,21 @@ export interface BankTransaction {
   bankAccountId: string;
   transactionAt: string;
   counterpartyName: string;
+  counterpartyBankName?: string;
+  counterpartyAccountMasked?: string;
   direction: 'IN' | 'OUT';
   amount: string;
   nature: string;
   settlementApplicable: boolean;
   matchStatus: string;
   sourceType: string;
-  bankAccount: { accountName: string; accountNumberMasked: string };
+  bankAccount: { bankName: string; accountNumberMasked: string };
   allocations: BankAllocation[];
+  attachments: LedgerAttachment[];
 }
 
 export interface Invoice {
   id: string;
-  invoiceCode?: string;
-  invoiceNumber: string;
   projectId?: string;
   issuedOn: string;
   invoiceType: string;
@@ -122,13 +137,14 @@ export interface Invoice {
   taxRate: string;
   taxAmount: string;
   totalAmount: string;
-  kind: string;
   status: string;
   project: Pick<Project, 'id' | 'projectCode' | 'name'>;
+  attachments: LedgerAttachment[];
 }
 
 export interface Expert {
   id: string;
+  formOwnerId?: string;
   professionalTitle?: string;
   bankName?: string;
   bankAccountMasked?: string;
@@ -145,8 +161,19 @@ export interface Expert {
     department?: string;
     position?: string;
   };
-  formOwner: User;
+  formOwner: ProjectManager;
   reviewer?: User;
+  credentials: ExpertCredential[];
+}
+
+export interface ExpertCredential extends LedgerAttachment {}
+
+export interface ExpertSensitiveDetails {
+  name: string;
+  phone?: string;
+  idNumber?: string;
+  bankAccount?: string;
+  unavailableFields: string[];
 }
 
 export interface Committee {
@@ -156,7 +183,7 @@ export interface Committee {
   establishedOn: string;
   ownerUserId?: string;
   status?: string;
-  owner: User;
+  owner: ProjectManager;
   _count?: { memberships: number };
 }
 
@@ -166,6 +193,7 @@ export interface MemberDue {
   periodLabel?: string;
   amountDue: string;
   amountPaid?: string;
+  lastPaidAt?: string;
   dueOn?: string;
   status: string;
 }
@@ -179,6 +207,7 @@ export interface Membership {
   joinedOn?: string;
   status: string;
   committee: Committee;
-  pm: User;
+  pm: ProjectManager;
   dues: MemberDue[];
+  _count?: { dues: number };
 }

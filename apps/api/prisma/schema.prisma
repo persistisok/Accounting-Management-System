@@ -8,12 +8,9 @@ datasource db {
 }
 
 enum UserRole {
+  SYSTEM_ADMIN
   ADMIN
-  PM
-  FINANCE
-  COMPLIANCE
-  REVIEWER
-  VIEWER
+  GUEST
 }
 
 enum RecordStatus {
@@ -114,24 +111,39 @@ enum DueStatus {
 }
 
 model User {
-  id           String       @id @default(uuid()) @db.Uuid
-  username     String       @unique @db.VarChar(64)
-  passwordHash String       @map("password_hash")
-  displayName  String       @map("display_name") @db.VarChar(100)
-  department   String?      @db.VarChar(100)
-  role         UserRole
-  status       RecordStatus @default(ACTIVE)
-  createdAt    DateTime     @default(now()) @map("created_at")
-  updatedAt    DateTime     @updatedAt @map("updated_at")
+  id               String       @id @default(uuid()) @db.Uuid
+  username         String       @unique @db.VarChar(64)
+  passwordHash     String       @map("password_hash")
+  displayName      String       @map("display_name") @db.VarChar(100)
+  role             UserRole
+  projectManagerId String?      @unique @map("project_manager_id") @db.Uuid
+  status           RecordStatus @default(ACTIVE)
+  createdAt        DateTime     @default(now()) @map("created_at")
+  updatedAt        DateTime     @updatedAt @map("updated_at")
 
-  projects      Project[]      @relation("ProjectManager")
-  organizations Organization[] @relation("OrganizationOwner")
-  committees    Committee[]    @relation("CommitteeOwner")
-  memberships   Membership[]   @relation("MembershipManager")
-  expertForms   ExpertProfile[] @relation("ExpertFormOwner")
+  projectManager ProjectManager? @relation(fields: [projectManagerId], references: [id], onDelete: SetNull)
   expertReviews ExpertProfile[] @relation("ExpertReviewer")
 
   @@map("users")
+}
+
+model ProjectManager {
+  id          String       @id @default(uuid()) @db.Uuid
+  displayName String       @map("display_name") @db.VarChar(100)
+  department  String?      @db.VarChar(100)
+  status      RecordStatus @default(ACTIVE)
+  createdAt   DateTime     @default(now()) @map("created_at")
+  updatedAt   DateTime     @updatedAt @map("updated_at")
+
+  account       User?
+  projects      Project[]       @relation("ProjectManager")
+  organizations Organization[]  @relation("OrganizationOwner")
+  committees    Committee[]     @relation("CommitteeOwner")
+  memberships   Membership[]    @relation("MembershipManager")
+  expertForms   ExpertProfile[] @relation("ExpertFormOwner")
+
+  @@index([status, displayName])
+  @@map("project_managers")
 }
 
 model Project {
@@ -152,7 +164,7 @@ model Project {
   createdAt       DateTime      @default(now()) @map("created_at")
   updatedAt       DateTime      @updatedAt @map("updated_at")
 
-  pm         User?                      @relation("ProjectManager", fields: [pmUserId], references: [id])
+  pm         ProjectManager?            @relation("ProjectManager", fields: [pmUserId], references: [id])
   contracts  Contract[]
   allocations BankAllocation[]
   invoices   Invoice[]
@@ -184,7 +196,7 @@ model Organization {
   createdAt        DateTime     @default(now()) @map("created_at")
   updatedAt        DateTime     @updatedAt @map("updated_at")
 
-  owner      User                       @relation("OrganizationOwner", fields: [ownerUserId], references: [id])
+  owner      ProjectManager             @relation("OrganizationOwner", fields: [ownerUserId], references: [id])
   roles      OrganizationRole[]
   contracts  Contract[]
   candidates ProjectExecutorCandidate[]
@@ -256,6 +268,7 @@ model BankAccount {
   accountName            String       @map("account_name") @db.VarChar(200)
   bankName               String       @map("bank_name") @db.VarChar(200)
   accountNumberEncrypted String       @map("account_number_encrypted")
+  accountNumberHash      String?      @unique @map("account_number_hash") @db.VarChar(64)
   accountNumberMasked    String       @map("account_number_masked") @db.VarChar(64)
   status                 RecordStatus @default(ACTIVE)
   createdAt              DateTime     @default(now()) @map("created_at")
@@ -272,6 +285,8 @@ model BankTransaction {
   transactionNo             String?              @map("transaction_no") @db.VarChar(100)
   transactionAt             DateTime             @map("transaction_at")
   counterpartyName          String               @map("counterparty_name") @db.VarChar(200)
+  counterpartyBankName      String?              @map("counterparty_bank_name") @db.VarChar(200)
+  counterpartyAccountEncrypted String?           @map("counterparty_account_encrypted")
   counterpartyAccountMasked String?              @map("counterparty_account_masked") @db.VarChar(64)
   direction                 TransactionDirection
   amount                    Decimal              @db.Decimal(18, 2)
@@ -317,7 +332,7 @@ model BankAllocation {
 model Invoice {
   id                 String        @id @default(uuid()) @db.Uuid
   invoiceCode        String?       @map("invoice_code") @db.VarChar(32)
-  invoiceNumber      String        @map("invoice_number") @db.VarChar(64)
+  invoiceNumber      String?       @map("invoice_number") @db.VarChar(64)
   projectId          String        @map("project_id") @db.Uuid
   issuedOn           DateTime      @map("issued_on") @db.Date
   invoiceType        String        @map("invoice_type") @db.VarChar(30)
@@ -380,7 +395,7 @@ model ExpertProfile {
   updatedAt            DateTime     @updatedAt @map("updated_at")
 
   person      Person           @relation(fields: [personId], references: [id], onDelete: Restrict)
-  formOwner   User             @relation("ExpertFormOwner", fields: [formOwnerId], references: [id])
+  formOwner   ProjectManager   @relation("ExpertFormOwner", fields: [formOwnerId], references: [id])
   reviewer    User?            @relation("ExpertReviewer", fields: [reviewerId], references: [id])
   allocations BankAllocation[]
 
@@ -391,14 +406,14 @@ model ExpertProfile {
 model Committee {
   id            String       @id @default(uuid()) @db.Uuid
   committeeCode String       @unique @map("committee_code") @db.VarChar(32)
-  name          String       @db.VarChar(200)
+  name          String       @unique @db.VarChar(200)
   establishedOn DateTime     @map("established_on") @db.Date
   ownerUserId   String       @map("owner_user_id") @db.Uuid
   status        RecordStatus @default(ACTIVE)
   createdAt     DateTime     @default(now()) @map("created_at")
   updatedAt     DateTime     @updatedAt @map("updated_at")
 
-  owner       User         @relation("CommitteeOwner", fields: [ownerUserId], references: [id])
+  owner       ProjectManager @relation("CommitteeOwner", fields: [ownerUserId], references: [id])
   memberships Membership[]
 
   @@map("committees")
@@ -416,7 +431,7 @@ model Membership {
   updatedAt    DateTime     @updatedAt @map("updated_at")
 
   committee Committee   @relation(fields: [committeeId], references: [id], onDelete: Restrict)
-  pm        User        @relation("MembershipManager", fields: [pmUserId], references: [id])
+  pm        ProjectManager @relation("MembershipManager", fields: [pmUserId], references: [id])
   dues      MemberDue[]
 
   @@index([committeeId, memberName])

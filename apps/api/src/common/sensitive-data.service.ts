@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { createCipheriv, createHash, randomBytes } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 
 @Injectable()
 export class SensitiveDataService {
@@ -19,6 +19,15 @@ export class SensitiveDataService {
     const encrypted = Buffer.concat([cipher.update(value, 'utf8'), cipher.final()]);
     const tag = cipher.getAuthTag();
     return `${iv.toString('base64')}.${tag.toString('base64')}.${encrypted.toString('base64')}`;
+  }
+
+  decrypt(value?: string | null) {
+    if (!value) return undefined;
+    const [ivValue, tagValue, encryptedValue] = value.split('.');
+    if (!ivValue || !tagValue || !encryptedValue) throw new Error('敏感字段密文格式无效');
+    const decipher = createDecipheriv('aes-256-gcm', this.key, Buffer.from(ivValue, 'base64'));
+    decipher.setAuthTag(Buffer.from(tagValue, 'base64'));
+    return Buffer.concat([decipher.update(Buffer.from(encryptedValue, 'base64')), decipher.final()]).toString('utf8');
   }
 
   hash(value?: string) {

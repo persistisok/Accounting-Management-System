@@ -2,9 +2,9 @@ import { type ReactNode } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { AppShell } from './components/AppShell';
 import { useAuth } from './lib/auth';
+import { AccountsPage } from './pages/AccountsPage';
 import { BankingPage } from './pages/BankingPage';
 import { ContractsPage } from './pages/ContractsPage';
-import { DashboardPage } from './pages/DashboardPage';
 import { ExpertsPage } from './pages/ExpertsPage';
 import { InvoicesPage } from './pages/InvoicesPage';
 import { LoginPage } from './pages/LoginPage';
@@ -19,9 +19,14 @@ function ProtectedLayout() {
   return user ? <AppShell /> : <Navigate to="/login" replace />;
 }
 
-function AdminOnly({ children }: { children: ReactNode }) {
+function BusinessAdminOnly({ children }: { children: ReactNode }) {
   const { user } = useAuth();
-  return user?.role === 'ADMIN' ? children : <Navigate to="/" replace />;
+  return user?.role === 'SYSTEM_ADMIN' || user?.role === 'ADMIN' ? children : <Navigate to="/projects" replace />;
+}
+
+function SystemAdminOnly({ children }: { children: ReactNode }) {
+  const { user } = useAuth();
+  return user?.role === 'SYSTEM_ADMIN' ? children : <Navigate to="/projects" replace />;
 }
 
 export function App() {
@@ -29,7 +34,7 @@ export function App() {
     <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route element={<ProtectedLayout />}>
-        <Route index element={<DashboardPage />} />
+        <Route index element={<Navigate to="/projects" replace />} />
         <Route path="projects" element={<ProjectsPage />} />
         <Route path="projects/:id" element={<ProjectDetailPage />} />
         <Route path="contracts" element={<ContractsPage />} />
@@ -39,9 +44,10 @@ export function App() {
         <Route path="executors" element={<OrganizationsPage roleType="EXECUTOR" />} />
         <Route path="experts" element={<ExpertsPage />} />
         <Route path="members" element={<MembersPage />} />
-        <Route path="project-managers" element={<AdminOnly><ProjectManagersPage /></AdminOnly>} />
+        <Route path="project-managers" element={<BusinessAdminOnly><ProjectManagersPage /></BusinessAdminOnly>} />
+        <Route path="accounts" element={<SystemAdminOnly><AccountsPage /></SystemAdminOnly>} />
       </Route>
-      <Route path="*" element={<Navigate to="/" replace />} />
+      <Route path="*" element={<Navigate to="/projects" replace />} />
     </Routes>
   );
 }

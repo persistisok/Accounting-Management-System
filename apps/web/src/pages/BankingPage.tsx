@@ -1,121 +1,257 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { GitBranchPlus, Pencil, Plus, RotateCcw, Trash2 } from 'lucide-react';
+import { Landmark, Pencil, Plus, Trash2 } from 'lucide-react';
 import { type FormEvent, useState } from 'react';
 import { DataTable, type TableColumn } from '../components/DataTable';
 import { ConfirmActionModal } from '../components/ConfirmActionModal';
-import { Field, FormActions, Input, MoneyInput, Select } from '../components/FormControls';
+import { DateInput, Field, FormActions, Input, MoneyInput, SearchableSelect, Select } from '../components/FormControls';
+import { LedgerAttachmentList, PdfAttachmentInput, uploadLedgerAttachments } from '../components/LedgerAttachments';
 import { Modal } from '../components/Modal';
 import { PageHeader } from '../components/PageHeader';
+import { DEFAULT_PAGE_SIZE, Pagination } from '../components/Pagination';
 import { SearchBar } from '../components/SearchBar';
 import { ErrorState, LoadingState } from '../components/States';
 import { StatusChip } from '../components/StatusChip';
 import { api, queryString } from '../lib/api';
+import { useAuth } from '../lib/auth';
 import { formObject } from '../lib/form';
 import { formatDate, formatMoney, statusLabels } from '../lib/format';
-import type { BankTransaction, Expert, ListResponse, MemberDue, Membership, Project } from '../lib/types';
+import type { BankAllocation, BankTransaction, ListResponse, Project } from '../lib/types';
 
-interface BankAccount { id: string; accountName: string; accountNumberMasked: string; bankName: string }
-interface DueOption extends MemberDue { membership: Membership }
+interface BankAccount {
+  id: string;
+  bankName: string;
+  accountNumberMasked: string;
+  status?: string;
+  _count?: { transactions: number };
+}
+interface ExpertOption { id: string; person: { name: string; organizationName?: string } }
+interface ExpertPaymentDetails { name: string; bankName: string; bankAccount: string }
+interface MemberPaymentOption {
+  id: string;
+  memberName: string;
+  committee: { committeeCode: string; name: string };
+  outstandingAmount: string;
+  dueCount: number;
+}
+type FundingCategory = 'SUPPORT_RECEIPT' | 'MEMBER_DUE' | 'EXECUTION_PAYMENT' | 'EXPERT_FEE';
+type AccountEditor = BankAccount | 'new' | null;
 
 export function BankingPage() {
+  const { user } = useAuth();
+  const canEdit = user?.role === 'SYSTEM_ADMIN' || user?.role === 'ADMIN';
   const [q, setQ] = useState('');
+  const [page, setPage] = useState(1);
   const [transactionModal, setTransactionModal] = useState(false);
   const [editing, setEditing] = useState<BankTransaction | null>(null);
   const [excluding, setExcluding] = useState<BankTransaction | null>(null);
-  const [selected, setSelected] = useState<BankTransaction | null>(null);
-  const [category, setCategory] = useState('SUPPORT_RECEIPT');
+  const [direction, setDirection] = useState<'IN' | 'OUT'>('IN');
+  const [category, setCategory] = useState<FundingCategory>('SUPPORT_RECEIPT');
+  const [expertId, setExpertId] = useState('');
+  const [membershipId, setMembershipId] = useState('');
+  const [counterpartyName, setCounterpartyName] = useState('');
+  const [counterpartyBankName, setCounterpartyBankName] = useState('');
+  const [counterpartyAccountNumber, setCounterpartyAccountNumber] = useState('');
+  const [attachmentFiles, setAttachmentFiles] = useState<File[]>([]);
+  const [notice, setNotice] = useState('');
+  const [accountManager, setAccountManager] = useState(false);
+  const [accountQ, setAccountQ] = useState('');
+  const [accountPage, setAccountPage] = useState(1);
+  const [accountEditor, setAccountEditor] = useState<AccountEditor>(null);
+  const [deletingAccount, setDeletingAccount] = useState<BankAccount | null>(null);
   const queryClient = useQueryClient();
-  const transactions = useQuery({ queryKey: ['banking', q], queryFn: () => api.get<ListResponse<BankTransaction>>(`/banking/transactions${queryString({ q, pageSize: 100 })}`) });
-  const accounts = useQuery({ queryKey: ['bank-accounts'], queryFn: () => api.get<BankAccount[]>('/banking/accounts') });
-  const projects = useQuery({ queryKey: ['projects-options-list'], queryFn: () => api.get<ListResponse<Project>>('/projects?pageSize=100') });
-  const experts = useQuery({ queryKey: ['expert-options'], queryFn: () => api.get<Pick<Expert, 'id' | 'person'>[]>('/experts/options') });
-  const dues = useQuery({ queryKey: ['due-options'], queryFn: () => api.get<DueOption[]>('/memberships/dues/options') });
+  const transactions = useQuery({ queryKey: ['banking', q, page], queryFn: () => api.get<ListResponse<BankTransaction>>(`/banking/transactions${queryString({ q, page, pageSize: DEFAULT_PAGE_SIZE })}`) });
+  const accounts = useQuery({ queryKey: ['bank-account-options'], queryFn: () => api.get<BankAccount[]>('/banking/accounts/options') });
+  const accountList = useQuery({
+    queryKey: ['bank-accounts', accountQ, accountPage],
+    queryFn: () => api.get<ListResponse<BankAccount>>(`/banking/accounts${queryString({ q: accountQ, page: accountPage, pageSize: 10 })}`),
+    enabled: accountManager,
+  });
+  const projects = useQuery({ queryKey: ['project-options'], queryFn: () => api.get<Pick<Project, 'id' | 'projectCode' | 'name'>[]>('/projects/options') });
+  const experts = useQuery({ queryKey: ['expert-options'], queryFn: () => api.get<ExpertOption[]>('/experts/options') });
+  const members = useQuery({ queryKey: ['member-payment-options'], queryFn: () => api.get<MemberPaymentOption[]>('/memberships/payments/options') });
+  const expertPaymentDetails = useMutation({
+    mutationFn: (id: string) => api.get<ExpertPaymentDetails>(`/experts/${id}/payment-details`),
+    onSuccess: (details) => {
+      setCounterpartyName(details.name);
+      setCounterpartyBankName(details.bankName);
+      setCounterpartyAccountNumber(details.bankAccount);
+    },
+  });
   const save = useMutation({
-    mutationFn: (body: Record<string, string>) => editing
-      ? api.patch(`/banking/transactions/${editing.id}`, body)
-      : api.post('/banking/transactions', { ...body, settlementApplicable: true, sourceType: 'MANUAL' }),
-    onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ['banking'] }); setTransactionModal(false); setEditing(null); },
+    mutationFn: async ({ body, files }: { body: Record<string, string>; files: File[] }) => {
+      const transaction = editing
+        ? await api.patch<BankTransaction>(`/banking/transactions/${editing.id}`, body)
+        : await api.post<BankTransaction>('/banking/transactions', body);
+      return { failedUploads: await uploadLedgerAttachments('BANK_TRANSACTION', transaction.id, files) };
+    },
+    onSuccess: ({ failedUploads }) => {
+      void queryClient.invalidateQueries({ queryKey: ['banking'] });
+      void queryClient.invalidateQueries({ queryKey: ['projects'] });
+      void queryClient.invalidateQueries({ queryKey: ['memberships'] });
+      void queryClient.invalidateQueries({ queryKey: ['member-dues'] });
+      void queryClient.invalidateQueries({ queryKey: ['member-payment-options'] });
+      setNotice(failedUploads ? `银行流水已保存，但有 ${failedUploads} 个附件上传失败，请编辑流水后重试。` : '');
+      setTransactionModal(false);
+      setEditing(null);
+      setAttachmentFiles([]);
+    },
   });
   const exclude = useMutation({
     mutationFn: (id: string) => api.delete(`/banking/transactions/${id}`),
-    onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ['banking'] }); setExcluding(null); },
-  });
-  const allocate = useMutation({
-    mutationFn: (body: Record<string, string>) => api.post(`/banking/transactions/${selected?.id}/allocations`, body),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['banking'] }); void queryClient.invalidateQueries({ queryKey: ['projects'] });
-      void queryClient.invalidateQueries({ queryKey: ['memberships'] }); setSelected(null);
-    },
-  });
-  const reverse = useMutation({
-    mutationFn: (id: string) => api.post(`/banking/allocations/${id}/reverse`, {}),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['banking'] });
+      void queryClient.invalidateQueries({ queryKey: ['projects'] });
       void queryClient.invalidateQueries({ queryKey: ['memberships'] });
-      setSelected(null);
+      setExcluding(null);
+    },
+  });
+  const saveAccount = useMutation({
+    mutationFn: (body: Record<string, string>) => accountEditor && accountEditor !== 'new'
+      ? api.patch<BankAccount>(`/banking/accounts/${accountEditor.id}`, body)
+      : api.post<BankAccount>('/banking/accounts', body),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['bank-accounts'] });
+      void queryClient.invalidateQueries({ queryKey: ['bank-account-options'] });
+      setAccountEditor(null);
+      setAccountManager(true);
+    },
+  });
+  const removeAccount = useMutation({
+    mutationFn: (id: string) => api.delete<BankAccount>(`/banking/accounts/${id}`),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['bank-accounts'] });
+      void queryClient.invalidateQueries({ queryKey: ['bank-account-options'] });
+      setDeletingAccount(null);
+      setAccountManager(true);
     },
   });
   const columns: TableColumn<BankTransaction>[] = [
-    { key: 'date', label: '交易时间', render: (row) => <span className="small-text">{formatDate(row.transactionAt, true)}<br /><span className="mono">{row.transactionNo ?? '手工录入'}</span></span> },
-    { key: 'counterparty', label: '对方账户名称', render: (row) => <span className="primary-cell"><strong>{row.counterpartyName}</strong><small>{row.nature}</small></span> },
+    { key: 'date', label: '交易时间', render: (row) => <span className="small-text">{formatDate(row.transactionAt, true)}<br /><span className="mono">{row.bankAccount.bankName}</span></span> },
+    { key: 'counterparty', label: '对方账户', render: (row) => <span className="primary-cell"><strong>{row.counterpartyName}</strong><small>{row.counterpartyBankName ?? '未登记银行'} · {row.counterpartyAccountMasked ?? '未登记账号'}</small><small>{row.nature}</small></span> },
     { key: 'direction', label: '收支', render: (row) => <StatusChip value={row.direction} /> },
     { key: 'amount', label: '流水金额', className: 'number', render: (row) => <strong className={row.direction === 'IN' ? 'positive' : 'expense-text'}>{row.direction === 'IN' ? '+' : '−'}{formatMoney(row.amount)}</strong> },
-    { key: 'allocation', label: '已关联', render: (row) => row.allocations.some((item) => item.status !== 'REVERSED') ? <span className="allocation-list">{row.allocations.filter((item) => item.status !== 'REVERSED').map((item) => <small key={item.id}>{statusLabels[item.category]} · {item.project?.projectCode ?? item.expertProfile?.person.name ?? '会费'} · {formatMoney(item.allocatedAmount)}</small>)}</span> : <span className="muted">尚未关联</span> },
+    { key: 'allocation', label: '关联对象 / 资金分类', render: (row) => row.allocations.some((item) => item.status === 'CONFIRMED') ? <span className="allocation-list">{row.allocations.filter((item) => item.status === 'CONFIRMED').map((item) => <small key={item.id}>{allocationSubject(item)} · {statusLabels[item.category] ?? item.category}</small>)}</span> : <span className="muted">尚未归类</span> },
+    { key: 'attachments', label: '附件列表', render: (row) => <LedgerAttachmentList objectType="BANK_TRANSACTION" objectId={row.id} attachments={row.attachments ?? []} /> },
     { key: 'status', label: '匹配状态', render: (row) => <StatusChip value={row.matchStatus} /> },
-    { key: 'action', label: '', render: (row) => {
-      const hasAllocation = row.allocations.some((item) => item.status !== 'REVERSED');
+  ];
+  if (canEdit) columns.push({ key: 'action', label: '', render: (row) => {
       return <span className="row-actions">
-        <button className="table-action" onClick={(event) => { event.stopPropagation(); setSelected(row); setCategory(row.direction === 'IN' ? 'SUPPORT_RECEIPT' : 'EXECUTION_PAYMENT'); }} disabled={row.matchStatus === 'MATCHED' || row.matchStatus === 'EXCLUDED'}><GitBranchPlus size={15} />分配</button>
-        <button className="table-action" onClick={() => setEditing(row)} disabled={row.sourceType !== 'MANUAL' || !row.settlementApplicable || hasAllocation}><Pencil size={14} />编辑</button>
-        {row.settlementApplicable && <button className="table-action danger" onClick={() => setExcluding(row)} disabled={hasAllocation}><Trash2 size={14} />排除</button>}
+        <button className="table-action" onClick={() => {
+          const allocation = row.allocations.find((item) => item.status === 'CONFIRMED');
+          setDirection(row.direction);
+          setCategory((allocation?.category as FundingCategory | undefined) ?? (row.direction === 'IN' ? 'SUPPORT_RECEIPT' : 'EXECUTION_PAYMENT'));
+          setExpertId(allocation?.expertProfile?.id ?? '');
+          setMembershipId(allocation?.memberDue?.membership.id ?? '');
+          setCounterpartyName(row.counterpartyName);
+          setCounterpartyBankName(row.counterpartyBankName ?? '');
+          setCounterpartyAccountNumber('');
+          setAttachmentFiles([]);
+          setNotice('');
+          setEditing(row);
+        }} disabled={row.sourceType !== 'MANUAL' || !row.settlementApplicable}><Pencil size={14} />编辑</button>
+        {row.settlementApplicable && <button className="table-action danger" onClick={() => setExcluding(row)}><Trash2 size={14} />作废</button>}
       </span>;
-    } },
+    } });
+  const accountColumns: TableColumn<BankAccount>[] = [
+    { key: 'bank', label: '银行名称', render: (row) => <strong className="key-cell">{row.bankName}</strong> },
+    { key: 'number', label: '银行账号', render: (row) => <span className="mono sensitive-value">{row.accountNumberMasked}</span> },
+    { key: 'transactions', label: '关联流水', className: 'number', render: (row) => <strong>{row._count?.transactions ?? 0}</strong> },
+    { key: 'status', label: '状态', render: (row) => <span className={`status-chip ${row.status === 'INACTIVE' ? 'neutral' : 'good'}`}>{row.status === 'INACTIVE' ? '已停用' : '启用'}</span> },
+    { key: 'action', label: '', render: (row) => <span className="row-actions"><button type="button" className="table-action" onClick={() => { setAccountEditor(row); setAccountManager(false); }}><Pencil size={14} />编辑</button>{row.status === 'ACTIVE' && <button type="button" className="table-action danger" onClick={() => { setDeletingAccount(row); setAccountManager(false); }}><Trash2 size={14} />停用</button>}</span> },
   ];
 
-  function submitAllocation(event: FormEvent<HTMLFormElement>) {
+  function submitTransaction(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const body = formObject(event.currentTarget);
-    Object.keys(body).forEach((key) => { if (!body[key]) delete body[key]; });
-    allocate.mutate(body);
+    body.transactionAt = `${body.transactionDate}T${body.transactionTime}:00`;
+    delete body.transactionDate;
+    delete body.transactionTime;
+    if (!body.counterpartyAccountNumber) delete body.counterpartyAccountNumber;
+    save.mutate({ body, files: attachmentFiles });
   }
-  const allocated = selected?.allocations.filter((item) => item.status !== 'REVERSED').reduce((sum, item) => sum + Number(item.allocatedAmount), 0) ?? 0;
-  const remaining = Number(selected?.amount ?? 0) - allocated;
+  function submitAccount(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const body = formObject(event.currentTarget);
+    if (!body.accountNumber) delete body.accountNumber;
+    saveAccount.mutate(body);
+  }
+  function openNewTransaction() {
+    setDirection('IN');
+    setCategory('SUPPORT_RECEIPT');
+    setExpertId('');
+    setMembershipId('');
+    setCounterpartyName('');
+    setCounterpartyBankName('');
+    setCounterpartyAccountNumber('');
+    setAttachmentFiles([]);
+    setNotice('');
+    expertPaymentDetails.reset();
+    setTransactionModal(true);
+  }
+  const localTransactionAt = editing ? toLocalDateTime(editing.transactionAt) : '';
+  const editingAllocation = editing?.allocations.find((item) => item.status === 'CONFIRMED');
+  const editingAccount = accountEditor && accountEditor !== 'new' ? accountEditor : null;
+  const memberPaymentOptions = (members.data ?? []).filter((item) => Number(item.outstandingAmount) > 0 || item.id === membershipId);
   return <div className="page-enter">
-    <PageHeader eyebrow="业务台账 / 资金" title="银行日记账" description="原始流水保持不变，通过分配记录连接项目、专家或会员会费。" action={<button className="button primary" onClick={() => setTransactionModal(true)}><Plus size={17} />录入流水</button>} />
-    <div className="toolbar"><SearchBar value={q} onChange={setQ} placeholder="搜索流水号、对方、摘要或项目编码" /><span className="result-count">{transactions.data?.total ?? 0} 笔流水</span></div>
-    <section className="panel table-panel">{transactions.isLoading ? <LoadingState /> : transactions.error ? <ErrorState error={transactions.error} /> : <DataTable columns={columns} rows={transactions.data?.items ?? []} rowKey={(row) => row.id} />}</section>
+    <PageHeader eyebrow="业务台账 / 资金" title="银行日记账" description="按资金分类关联项目、专家或会员，保存后同步更新业务台账。" action={canEdit ? <div className="button-group"><button className="button secondary" onClick={() => setAccountManager(true)}><Landmark size={16} />本方账户管理</button><button className="button primary" onClick={openNewTransaction}><Plus size={17} />录入流水</button></div> : undefined} />
+    {notice && <div className="operation-banner">{notice}</div>}
+    <div className="toolbar"><SearchBar value={q} onChange={(value) => { setQ(value); setPage(1); }} placeholder="搜索对方账户、银行、性质或项目编码" /><span className="result-count">{transactions.data?.total ?? 0} 笔流水</span></div>
+    <section className="panel table-panel">{transactions.isLoading ? <LoadingState /> : transactions.error ? <ErrorState error={transactions.error} /> : <><DataTable columns={columns} rows={transactions.data?.items ?? []} rowKey={(row) => row.id} /><Pagination page={page} total={transactions.data?.total ?? 0} onPageChange={setPage} /></>}</section>
 
-    <Modal open={transactionModal || Boolean(editing)} onClose={() => { setTransactionModal(false); setEditing(null); }} title={editing ? '编辑银行流水' : '录入银行流水'} description={editing ? '只有未分配的手工流水可以修改。' : '保存后可继续把金额分配到项目或会费。'} size="large">
-      <form key={editing?.id ?? 'new'} className="form-grid" onSubmit={(event: FormEvent<HTMLFormElement>) => { event.preventDefault(); save.mutate(formObject(event.currentTarget)); }}>
-        <Field label="本方银行账户" span={2}><Select name="bankAccountId" required defaultValue={editing?.bankAccountId ?? ''}><option value="">请选择</option>{accounts.data?.map((item) => <option key={item.id} value={item.id}>{item.accountName} · {item.accountNumberMasked}</option>)}</Select></Field>
-        <Field label="银行流水号"><Input name="transactionNo" defaultValue={editing?.transactionNo ?? ''} /></Field><Field label="交易时间"><Input name="transactionAt" type="datetime-local" required defaultValue={editing ? toLocalDateTime(editing.transactionAt) : ''} /></Field>
-        <Field label="对方账户名称"><Input name="counterpartyName" required defaultValue={editing?.counterpartyName ?? ''} /></Field><Field label="收支方向"><Select name="direction" defaultValue={editing?.direction ?? 'IN'}><option value="IN">收入</option><option value="OUT">支出</option></Select></Field>
-        <Field label="金额"><MoneyInput name="amount" min="0.01" required defaultValue={editing?.amount ?? ''} /></Field><Field label="摘要 / 性质"><Input name="nature" required defaultValue={editing?.nature ?? ''} /></Field>
+    <Modal open={transactionModal || Boolean(editing)} onClose={() => { setTransactionModal(false); setEditing(null); setAttachmentFiles([]); expertPaymentDetails.reset(); }} title={editing ? '编辑银行流水' : '录入银行流水'} description="先选择收支方向和资金分类，再填写对应业务信息。" size="large">
+      <form key={editing?.id ?? 'new'} className="form-grid" onSubmit={submitTransaction}>
+        <Field label="收支方向"><Select name="direction" value={direction} onChange={(event) => { const value = event.target.value as 'IN' | 'OUT'; setDirection(value); setCategory(value === 'IN' ? 'SUPPORT_RECEIPT' : 'EXECUTION_PAYMENT'); setExpertId(''); setMembershipId(''); setCounterpartyName(''); setCounterpartyBankName(''); setCounterpartyAccountNumber(''); expertPaymentDetails.reset(); }}><option value="IN">收入</option><option value="OUT">支出</option></Select></Field>
+        <Field label="资金分类"><Select name="category" value={category} onChange={(event) => { const value = event.target.value as FundingCategory; setCategory(value); if (value !== 'EXPERT_FEE') setExpertId(''); if (value !== 'MEMBER_DUE') setMembershipId(''); setCounterpartyName(''); setCounterpartyBankName(''); setCounterpartyAccountNumber(''); expertPaymentDetails.reset(); }}>{direction === 'IN' ? <><option value="SUPPORT_RECEIPT">支持款收入</option><option value="MEMBER_DUE">会员会费收入</option></> : <><option value="EXECUTION_PAYMENT">执行款支出</option><option value="EXPERT_FEE">专家费支出</option></>}</Select></Field>
+        {category !== 'MEMBER_DUE' && <Field label="关联项目" span={category === 'EXPERT_FEE' ? 1 : 2}><SearchableSelect name="projectId" ariaLabel="关联项目" required defaultValue={editingAllocation?.project?.id ?? ''} disabled={projects.isLoading || projects.isError} placeholder="请选择关联项目" searchPlaceholder="搜索项目编码或名称" options={(projects.data ?? []).map((item) => ({ value: item.id, label: `${item.projectCode} · ${item.name}` }))} /></Field>}
+        {category === 'EXPERT_FEE' && <Field label="专家"><SearchableSelect name="expertProfileId" ariaLabel="专家" required defaultValue={expertId} disabled={experts.isLoading || experts.isError || expertPaymentDetails.isPending} placeholder="请选择专家" searchPlaceholder="搜索专家姓名或单位" options={(experts.data ?? []).map((item) => ({ value: item.id, label: item.person.name, searchText: item.person.organizationName }))} onValueChange={(value) => { setExpertId(value); if (value) expertPaymentDetails.mutate(value); else { setCounterpartyName(''); setCounterpartyBankName(''); setCounterpartyAccountNumber(''); } }} /></Field>}
+        {category === 'MEMBER_DUE' && <Field label="会员" span={2} hint="会费将按应缴日期从早到晚自动冲抵"><SearchableSelect name="membershipId" ariaLabel="会员" required defaultValue={membershipId} disabled={members.isLoading || members.isError} placeholder="请选择有未缴会费的会员" searchPlaceholder="搜索会员、专委会或编码" options={memberPaymentOptions.map((item) => ({ value: item.id, label: `${item.memberName} · 未缴 ${formatMoney(item.outstandingAmount)}`, searchText: `${item.committee.committeeCode} ${item.committee.name}` }))} onValueChange={(value) => { setMembershipId(value); const member = members.data?.find((item) => item.id === value); if (member) setCounterpartyName(member.memberName); }} /></Field>}
+        <Field label="本方银行账户" span={2}><SearchableSelect name="bankAccountId" ariaLabel="本方银行账户" required defaultValue={editing?.bankAccountId ?? ''} disabled={accounts.isLoading || accounts.isError} placeholder="请选择本方银行账户" searchPlaceholder="搜索银行名称或账号尾号" options={(accounts.data ?? []).map((item) => ({ value: item.id, label: `${item.bankName} · ${item.accountNumberMasked}` }))} /></Field>
+        <div className="form-section-label span-2"><span>对方账户</span><small>以下信息用于识别本笔流水的交易对方</small></div>
+        <Field label="对方账户名称" span={2}><Input name="counterpartyName" required value={counterpartyName} onChange={(event) => setCounterpartyName(event.target.value)} /></Field>
+        <Field label="银行名称"><Input name="counterpartyBankName" required value={counterpartyBankName} onChange={(event) => setCounterpartyBankName(event.target.value)} /></Field>
+        <Field label="银行账号" hint={editing && !counterpartyAccountNumber ? `留空保留原账号 ${editing.counterpartyAccountMasked ?? ''}` : undefined}><Input name="counterpartyAccountNumber" required={!editing} autoComplete="off" value={counterpartyAccountNumber} onChange={(event) => setCounterpartyAccountNumber(event.target.value)} /></Field>
+        <div className="form-section-divider span-2" aria-hidden="true" />
+        <Field label="交易日期和时间" span={2}><div className="date-time-control"><DateInput name="transactionDate" aria-label="交易日期" required defaultValue={localTransactionAt.slice(0, 10)} /><Input name="transactionTime" type="time" aria-label="交易时间" required defaultValue={localTransactionAt.slice(11, 16)} /></div></Field>
+        <Field label="金额"><MoneyInput name="amount" min="0.01" required defaultValue={editing?.amount ?? ''} /></Field><Field label="性质"><Input name="nature" required defaultValue={editing?.nature ?? ''} /></Field>
+        <Field label="附件列表" span={2} hint="可选；仅支持 PDF，每次添加一份，最多 10 份；单个文件不超过 10MB。"><PdfAttachmentInput files={attachmentFiles} onFilesChange={setAttachmentFiles} existingCount={editing?.attachments?.length ?? 0} />{editing && <LedgerAttachmentList objectType="BANK_TRANSACTION" objectId={editing.id} attachments={editing.attachments ?? []} canDelete onDeleted={(attachmentId) => { setEditing((current) => current ? { ...current, attachments: current.attachments.filter((item) => item.id !== attachmentId) } : current); void queryClient.invalidateQueries({ queryKey: ['banking'] }); }} />}</Field>
+        {expertPaymentDetails.error && <p className="form-error span-2">专家银行信息读取失败：{expertPaymentDetails.error.message}，请手工填写。</p>}
         {save.error && <p className="form-error span-2">{save.error.message}</p>}
-        <div className="span-2"><FormActions pending={save.isPending} onCancel={() => { setTransactionModal(false); setEditing(null); }} submitLabel="保存流水" /></div>
+        <div className="span-2"><FormActions pending={save.isPending} onCancel={() => { setTransactionModal(false); setEditing(null); setAttachmentFiles([]); }} submitLabel="保存流水" /></div>
       </form>
     </Modal>
 
-    <Modal open={Boolean(selected)} onClose={() => setSelected(null)} title="分配流水" description="一笔流水可以分配给多个项目；分配总额不能超过流水金额。" size="large">
-      {selected && <>
-        <div className="allocation-summary"><span><small>流水金额</small><strong>{formatMoney(selected.amount)}</strong></span><i /><span><small>已分配</small><strong>{formatMoney(allocated)}</strong></span><i /><span className="remaining"><small>本次可分配</small><strong>{formatMoney(remaining)}</strong></span></div>
-        {selected.allocations.some((item) => item.status !== 'REVERSED') && <div className="allocation-list allocation-editor">{selected.allocations.filter((item) => item.status !== 'REVERSED').map((item) => <span key={item.id}><small>{statusLabels[item.category]} · {item.project?.projectCode ?? item.expertProfile?.person.name ?? '会费'} · {formatMoney(item.allocatedAmount)}</small><button className="table-action danger" type="button" disabled={reverse.isPending} onClick={() => reverse.mutate(item.id)}><RotateCcw size={13} />撤销分配</button></span>)}</div>}
-        <form className="form-grid" onSubmit={submitAllocation}>
-          <Field label="资金分类"><Select name="category" value={category} onChange={(event) => setCategory(event.target.value)}>{selected.direction === 'IN' ? <><option value="SUPPORT_RECEIPT">支持款收入</option><option value="MEMBER_DUE">会员会费</option><option value="OTHER">其他收入</option></> : <><option value="EXECUTION_PAYMENT">执行款支出</option><option value="EXPERT_FEE">专家费支出</option><option value="OTHER">其他支出</option></>}</Select></Field>
-          <Field label="分配金额"><MoneyInput name="allocatedAmount" min="0.01" max={remaining} required defaultValue={remaining.toFixed(2)} /></Field>
-          {['SUPPORT_RECEIPT', 'EXECUTION_PAYMENT', 'EXPERT_FEE'].includes(category) && <Field label="关联项目" span={2}><Select name="projectId" required><option value="">请选择项目</option>{projects.data?.items.map((item) => <option key={item.id} value={item.id}>{item.projectCode} · {item.name}</option>)}</Select></Field>}
-          {category === 'EXPERT_FEE' && <Field label="关联专家" span={2}><Select name="expertProfileId" required><option value="">请选择专家</option>{experts.data?.map((item) => <option key={item.id} value={item.id}>{item.person.name} · {item.person.organizationName}</option>)}</Select></Field>}
-          {category === 'MEMBER_DUE' && <Field label="关联会费" span={2}><Select name="memberDueId" required><option value="">请选择会费应收</option>{dues.data?.map((item) => <option key={item.id} value={item.id}>{item.membership.committee.name} · {item.membership.memberName} · {item.periodLabel ?? item.dueCode}</option>)}</Select></Field>}
-          {allocate.error && <p className="form-error span-2">{allocate.error.message}</p>}
-          <div className="span-2"><FormActions pending={allocate.isPending} onCancel={() => setSelected(null)} submitLabel="确认分配" /></div>
-        </form>
-      </>}
+    <Modal open={accountManager} onClose={() => setAccountManager(false)} title="本方银行账户" description="账户由银行名称和银行账号组成；列表仅显示脱敏账号。" size="wide">
+      <div className="account-management">
+        <div className="account-management-toolbar"><SearchBar value={accountQ} onChange={(value) => { setAccountQ(value); setAccountPage(1); }} placeholder="搜索银行名称或账号尾号" /><button type="button" className="button primary" onClick={() => { setAccountEditor('new'); setAccountManager(false); }}><Plus size={15} />新增账户</button></div>
+        {accountList.isLoading ? <LoadingState /> : accountList.error ? <ErrorState error={accountList.error} /> : <>
+          <DataTable columns={accountColumns} rows={accountList.data?.items ?? []} rowKey={(row) => row.id} />
+          <Pagination page={accountPage} pageSize={10} total={accountList.data?.total ?? 0} onPageChange={setAccountPage} />
+        </>}
+      </div>
     </Modal>
-    <ConfirmActionModal open={Boolean(excluding)} onClose={() => setExcluding(null)} onConfirm={() => excluding && exclude.mutate(excluding.id)} pending={exclude.isPending} title="排除银行流水" description={excluding ? `确认排除 ${excluding.counterpartyName} 的 ${formatMoney(excluding.amount)} 流水？排除后不再参与结算。` : ''} confirmLabel="确认排除" error={exclude.error} />
+
+    <Modal open={Boolean(accountEditor)} onClose={() => { setAccountEditor(null); setAccountManager(true); }} title={editingAccount ? '编辑本方银行账户' : '新增本方银行账户'} description={editingAccount ? '银行账号留空时保留原账号；修改会记录审计日志。' : '完整银行账号将加密保存，业务页面仅显示脱敏值。'}>
+      <form key={editingAccount?.id ?? 'new'} className="form-grid" onSubmit={submitAccount}>
+        <Field label="银行名称" span={2}><Input name="bankName" required maxLength={200} defaultValue={editingAccount?.bankName ?? ''} /></Field>
+        <Field label="银行账号" span={2} hint={editingAccount ? `留空保留原账号 ${editingAccount.accountNumberMasked}` : '保存后仅显示账号末四位'}><Input name="accountNumber" required={!editingAccount} maxLength={64} autoComplete="off" /></Field>
+        {editingAccount && <Field label="账户状态" span={2}><Select name="status" defaultValue={editingAccount.status}><option value="ACTIVE">启用</option><option value="INACTIVE">停用</option></Select></Field>}
+        {saveAccount.error && <p className="form-error span-2">{saveAccount.error.message}</p>}
+        <div className="span-2"><FormActions pending={saveAccount.isPending} onCancel={() => { setAccountEditor(null); setAccountManager(true); }} submitLabel={editingAccount ? '保存修改' : '保存账户'} /></div>
+      </form>
+    </Modal>
+
+    <ConfirmActionModal open={Boolean(deletingAccount)} onClose={() => { setDeletingAccount(null); setAccountManager(true); }} onConfirm={() => deletingAccount && removeAccount.mutate(deletingAccount.id)} pending={removeAccount.isPending} title="停用本方银行账户" description={deletingAccount ? `确认停用“${deletingAccount.bankName} · ${deletingAccount.accountNumberMasked}”？已有流水记录不会删除。` : ''} confirmLabel="确认停用" error={removeAccount.error} />
+    <ConfirmActionModal open={Boolean(excluding)} onClose={() => setExcluding(null)} onConfirm={() => excluding && exclude.mutate(excluding.id)} pending={exclude.isPending} title="作废银行流水" description={excluding ? `确认作废 ${excluding.counterpartyName} 的 ${formatMoney(excluding.amount)} 流水？已有分配将自动撤销，作废后不再参与结算。` : ''} confirmLabel="确认作废" error={exclude.error} />
   </div>;
 }
 
 function toLocalDateTime(value: string) {
   const date = new Date(value);
   return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+}
+
+function allocationSubject(allocation: BankAllocation) {
+  if (allocation.memberDue) return `${allocation.memberDue.membership.memberName} · ${allocation.memberDue.periodLabel ?? allocation.memberDue.dueCode}`;
+  if (allocation.expertProfile) return `${allocation.project?.projectCode ?? '未关联项目'} · ${allocation.expertProfile.person.name}`;
+  return allocation.project?.projectCode ?? '未关联对象';
 }

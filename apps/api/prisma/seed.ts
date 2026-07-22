@@ -1,33 +1,40 @@
 import { PrismaClient } from '@prisma/client';
 import { hash } from 'bcryptjs';
+import { createCipheriv, createHash, randomBytes } from 'node:crypto';
 
 const prisma = new PrismaClient();
+
+function encryptSensitive(value: string) {
+  const material = process.env.FIELD_ENCRYPTION_KEY ?? process.env.JWT_SECRET ?? 'development-only-change-this-secret';
+  const key = createHash('sha256').update(material).digest();
+  const iv = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', key, iv);
+  const encrypted = Buffer.concat([cipher.update(value, 'utf8'), cipher.final()]);
+  return `${iv.toString('base64')}.${cipher.getAuthTag().toString('base64')}.${encrypted.toString('base64')}`;
+}
 
 async function main() {
   const passwordHash = await hash('Admin123!', 12);
   const admin = await prisma.user.upsert({
     where: { username: 'admin' },
-    update: {},
+    update: { role: 'SYSTEM_ADMIN', status: 'ACTIVE' },
     create: {
       username: 'admin',
       passwordHash,
       displayName: '系统管理员',
-      department: '综合管理部',
-      role: 'ADMIN',
+      role: 'SYSTEM_ADMIN',
     },
   });
 
-  const pm = await prisma.user.upsert({
-    where: { username: 'pm.demo' },
-    update: {},
-    create: {
-      username: 'pm.demo',
-      passwordHash,
-      displayName: '林知夏',
-      department: '项目部',
-      role: 'PM',
-    },
-  });
+  const existingPm = await prisma.projectManager.findFirst({ where: { displayName: '林知夏' } });
+  const pm = existingPm
+    ? await prisma.projectManager.update({
+      where: { id: existingPm.id },
+      data: { department: '项目部', status: 'ACTIVE' },
+    })
+    : await prisma.projectManager.create({
+      data: { displayName: '林知夏', department: '项目部', status: 'ACTIVE' },
+    });
 
   const supporter = await prisma.organization.upsert({
     where: { organizationCode: 'SUP-0001' },
@@ -74,13 +81,6 @@ async function main() {
       pmName: pm.displayName,
       pmUserId: pm.id,
       status: 'ACTIVE',
-      candidates: {
-        create: {
-          organizationId: executor.id,
-          selectionStatus: 'SELECTED',
-          selectedOn: new Date('2026-03-12'),
-        },
-      },
     },
   });
   await prisma.projectCodeCounter.upsert({
@@ -122,10 +122,10 @@ async function main() {
   });
 
   const account = await prisma.bankAccount.upsert({
-    where: { id: '00000000-0000-0000-0000-000000000001' },
+    where: { id: '00000000-0000-4000-8000-000000000001' },
     update: {},
     create: {
-      id: '00000000-0000-0000-0000-000000000001',
+      id: '00000000-0000-4000-8000-000000000001',
       accountName: '示例业务主体',
       bankName: '示例银行上海分行',
       accountNumberEncrypted: 'demo-encrypted-account',
@@ -203,14 +203,19 @@ async function main() {
       position: '科室主任',
     },
   });
+  const demoExpertBankAccount = '6222000012346218';
   await prisma.expertProfile.upsert({
     where: { personId: person.id },
-    update: {},
+    update: {
+      bankName: '示例银行',
+      bankAccountEncrypted: encryptSensitive(demoExpertBankAccount),
+      bankAccountMasked: '**** **** **** 6218',
+    },
     create: {
       personId: person.id,
       professionalTitle: '主任医师',
       bankName: '示例银行',
-      bankAccountEncrypted: 'demo-encrypted-bank',
+      bankAccountEncrypted: encryptSensitive(demoExpertBankAccount),
       bankAccountMasked: '**** **** **** 6218',
       formOwnerId: pm.id,
       reviewerId: admin.id,

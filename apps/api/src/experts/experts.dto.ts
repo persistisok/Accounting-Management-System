@@ -1,5 +1,5 @@
 import { RecordStatus, ReviewStatus } from '@prisma/client';
-import { IsDateString, IsEmail, IsEnum, IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
+import { IsDateString, IsEmail, IsEnum, IsIn, IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
 import { ListQueryDto } from '../common/query.dto';
 
 export class ExpertListQueryDto extends ListQueryDto {
@@ -19,7 +19,7 @@ export class UpdateExpertDto {
   @IsOptional() @IsString() @MaxLength(200) bankName?: string;
   @IsOptional() @IsString() @MaxLength(64) bankAccount?: string;
   @IsOptional() @IsDateString() joinedOn?: string;
-  @IsOptional() @IsEnum(RecordStatus) status?: RecordStatus;
+  @IsOptional() @IsUUID() formOwnerId?: string;
 }
 
 export class CreateExpertDto {
@@ -34,9 +34,9 @@ export class CreateExpertDto {
   @IsOptional() @IsString() @MaxLength(200) bankName?: string;
   @IsOptional() @IsString() @MaxLength(64) bankAccount?: string;
   @IsOptional() @IsDateString() joinedOn?: string;
+  @IsUUID() formOwnerId!: string;
 }
 
 export class ReviewExpertDto {
-  @IsEnum(ReviewStatus) reviewStatus!: ReviewStatus;
-  @IsUUID() reviewerId!: string;
+  @IsIn(['APPROVED', 'REJECTED']) reviewStatus!: ReviewStatus;
 }

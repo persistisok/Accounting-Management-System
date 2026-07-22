@@ -1,7 +1,7 @@
 import { statusLabels } from '../lib/format';
 
-const good = new Set(['ACTIVE', 'SIGNED', 'MATCHED', 'APPROVED', 'CONFIRMED', 'PAID', 'NORMAL', 'SELECTED', 'IN']);
-const warn = new Set(['PARTIAL', 'PENDING', 'UNPAID', 'DRAFT', 'CANDIDATE']);
+const good = new Set(['ACTIVE', 'SIGNED', 'MATCHED', 'APPROVED', 'CONFIRMED', 'PAID', 'NORMAL', 'IN']);
+const warn = new Set(['PARTIAL', 'PENDING', 'UNPAID', 'DRAFT']);
 const bad = new Set(['VOID', 'REJECTED', 'CANCELLED', 'REVERSED', 'TERMINATED']);
 
 export function StatusChip({ value }: { value: string }) {

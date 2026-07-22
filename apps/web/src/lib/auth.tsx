@@ -1,4 +1,4 @@
-import { createContext, type ReactNode, useContext, useState } from 'react';
+import { createContext, type ReactNode, useContext, useEffect, useState } from 'react';
 import { api } from './api';
 import type { User } from './types';
 
@@ -18,6 +18,17 @@ function storedUser(): User | null {
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(storedUser);
+
+  useEffect(() => {
+    if (!localStorage.getItem('ledger_token')) return;
+    let active = true;
+    api.get<User>('/auth/me').then((currentUser) => {
+      if (!active) return;
+      localStorage.setItem('ledger_user', JSON.stringify(currentUser));
+      setUser(currentUser);
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, []);
 
   async function login(username: string, password: string) {
     const result = await api.post<{ accessToken: string; user: User }>('/auth/login', { username, password });

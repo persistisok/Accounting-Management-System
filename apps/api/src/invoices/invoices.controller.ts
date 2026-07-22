@@ -15,16 +15,16 @@ export class InvoicesController {
   list(@Query() query: InvoiceListQueryDto) { return this.invoices.list(query); }
 
   @Post()
-  @Roles('ADMIN', 'FINANCE')
+  @Roles('SYSTEM_ADMIN', 'ADMIN')
   create(@Body() dto: CreateInvoiceDto, @CurrentUser() user: AuthUser) { return this.invoices.create(dto, user.id); }
 
   @Patch(':id')
-  @Roles('ADMIN', 'FINANCE')
+  @Roles('SYSTEM_ADMIN', 'ADMIN')
   update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateInvoiceDto, @CurrentUser() user: AuthUser) {
     return this.invoices.update(id, dto, user.id);
   }
 
   @Post(':id/void')
-  @Roles('ADMIN', 'FINANCE')
+  @Roles('SYSTEM_ADMIN', 'ADMIN')
   void(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: AuthUser) { return this.invoices.void(id, user.id); }
 }

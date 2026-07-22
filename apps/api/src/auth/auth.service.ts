@@ -21,10 +21,17 @@ export class AuthService {
       username: user.username,
       displayName: user.displayName,
       role: user.role,
+      projectManagerId: user.projectManagerId,
     };
     return {
       accessToken: await this.jwt.signAsync(payload),
-      user: { id: user.id, username: user.username, displayName: user.displayName, role: user.role },
+      user: {
+        id: user.id,
+        username: user.username,
+        displayName: user.displayName,
+        role: user.role,
+        projectManagerId: user.projectManagerId,
+      },
     };
   }
 }

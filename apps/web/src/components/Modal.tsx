@@ -3,7 +3,7 @@ import { type ReactNode, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 
 export function Modal({ open, title, description, onClose, children, size = 'medium' }: {
-  open: boolean; title: string; description?: string; onClose: () => void; children: ReactNode; size?: 'medium' | 'large';
+  open: boolean; title: string; description?: string; onClose: () => void; children: ReactNode; size?: 'medium' | 'large' | 'wide';
 }) {
   useEffect(() => {
     if (!open) return;

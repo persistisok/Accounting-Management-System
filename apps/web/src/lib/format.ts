@@ -14,11 +14,10 @@ export const formatProjectPeriod = (months: number) =>
 export const statusLabels: Record<string, string> = {
   ACTIVE: '进行中', DRAFT: '草稿', CLOSED: '已结项', CANCELLED: '已取消', INACTIVE: '已停用',
   SIGNED: '已签署', TERMINATED: '已终止', VOID: '已作废', NORMAL: '正常',
-  MATCHED: '已匹配', PARTIAL: '部分匹配', UNMATCHED: '待匹配', EXCLUDED: '不适用',
+  MATCHED: '已匹配', PARTIAL: '部分匹配', UNMATCHED: '待匹配', EXCLUDED: '已作废',
   PENDING: '待复核', APPROVED: '已通过', REJECTED: '已退回',
   CONFIRMED: '已确认', REVERSED: '已撤销', PAID: '已缴清', UNPAID: '未缴', WAIVED: '已免除',
   SUPPORT: '支持协议', EXECUTION: '执行协议', RECEIVABLE: '应收', PAYABLE: '应付',
   IN: '收入', OUT: '支出', BLUE: '蓝票', RED: '红票',
-  SUPPORT_RECEIPT: '支持款', EXECUTION_PAYMENT: '执行款', EXPERT_FEE: '专家费', MEMBER_DUE: '会费', OTHER: '其他',
-  CANDIDATE: '候选', SELECTED: '已中选', NOT_SELECTED: '未中选', WITHDRAWN: '已退出',
+  SUPPORT_RECEIPT: '支持款收入', MEMBER_DUE: '会员会费收入', EXECUTION_PAYMENT: '执行款支出', EXPERT_FEE: '专家费支出', OTHER: '其他',
 };

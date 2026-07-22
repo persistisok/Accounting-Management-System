@@ -18,7 +18,7 @@ export class ProjectsController {
   options() { return this.projects.options(); }
 
   @Post()
-  @Roles('ADMIN', 'PM')
+  @Roles('SYSTEM_ADMIN', 'ADMIN')
   create(@Body() dto: CreateProjectDto, @CurrentUser() user: AuthUser) {
     return this.projects.create(dto, user.id);
   }
@@ -27,7 +27,7 @@ export class ProjectsController {
   findOne(@Param('id', ParseUUIDPipe) id: string) { return this.projects.findOne(id); }
 
   @Patch(':id')
-  @Roles('ADMIN', 'PM')
+  @Roles('SYSTEM_ADMIN', 'ADMIN')
   update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateProjectDto, @CurrentUser() user: AuthUser) {
     return this.projects.update(id, dto, user.id);
   }

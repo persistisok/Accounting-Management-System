@@ -15,25 +15,25 @@ export class ContractsController {
   list(@Query() query: ContractListQueryDto) { return this.contracts.list(query); }
 
   @Post()
-  @Roles('ADMIN', 'PM', 'COMPLIANCE')
+  @Roles('SYSTEM_ADMIN', 'ADMIN')
   create(@Body() dto: CreateContractDto, @CurrentUser() user: AuthUser) {
     return this.contracts.create(dto, user.id);
   }
 
   @Patch(':id')
-  @Roles('ADMIN', 'PM', 'COMPLIANCE')
+  @Roles('SYSTEM_ADMIN', 'ADMIN')
   update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateContractDto, @CurrentUser() user: AuthUser) {
     return this.contracts.update(id, dto, user.id);
   }
 
   @Post(':id/sign')
-  @Roles('ADMIN', 'PM', 'COMPLIANCE')
+  @Roles('SYSTEM_ADMIN', 'ADMIN')
   sign(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: AuthUser) {
     return this.contracts.setStatus(id, 'SIGNED', user.id);
   }
 
   @Post(':id/void')
-  @Roles('ADMIN', 'COMPLIANCE')
+  @Roles('SYSTEM_ADMIN', 'ADMIN')
   void(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: AuthUser) {
     return this.contracts.setStatus(id, 'VOID', user.id);
   }
