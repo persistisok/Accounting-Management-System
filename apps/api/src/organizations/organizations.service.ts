@@ -18,7 +18,6 @@ export class OrganizationsService {
       ...(query.q ? { OR: [
         { name: { contains: query.q, mode: 'insensitive' } },
         { organizationCode: { contains: query.q, mode: 'insensitive' } },
-        { creditCode: { contains: query.q, mode: 'insensitive' } },
       ] } : {}),
     };
     const [items, total] = await this.prisma.$transaction([
@@ -58,10 +57,7 @@ export class OrganizationsService {
     await this.requireActivePm(dto.ownerUserId);
     const normalizedName = normalizeOrganizationName(dto.name);
     const duplicate = await this.prisma.organization.findFirst({
-      where: { OR: [
-        { normalizedName },
-        ...(dto.creditCode ? [{ creditCode: dto.creditCode }] : []),
-      ] },
+      where: { normalizedName },
       include: { roles: true },
     });
     if (duplicate) {
@@ -78,7 +74,6 @@ export class OrganizationsService {
       data: {
         name: dto.name,
         normalizedName,
-        creditCode: dto.creditCode,
         platform: dto.platform,
         ownerUserId: dto.ownerUserId,
         contactName: dto.contactName,
@@ -100,12 +95,9 @@ export class OrganizationsService {
     if (!before) throw new NotFoundException('机构不存在');
     if (dto.ownerUserId) await this.requireActivePm(dto.ownerUserId);
     const normalizedName = dto.name ? normalizeOrganizationName(dto.name) : undefined;
-    if (normalizedName || dto.creditCode) {
+    if (normalizedName) {
       const duplicate = await this.prisma.organization.findFirst({
-        where: { id: { not: id }, OR: [
-          ...(normalizedName ? [{ normalizedName }] : []),
-          ...(dto.creditCode ? [{ creditCode: dto.creditCode }] : []),
-        ] },
+        where: { id: { not: id }, normalizedName },
         select: { name: true },
       });
       if (duplicate) throw new ConflictException(`“${duplicate.name}”与修改后的机构信息重复`);

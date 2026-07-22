@@ -32,7 +32,7 @@ export function OrganizationsPage({ roleType }: { roleType: 'SUPPORTER' | 'EXECU
   });
   const columns: TableColumn<Organization>[] = [
     { key: 'code', label: `${isSupporter ? '支持方' : '执行方'}编号`, render: (row) => <span className="mono key-cell">{row.organizationCode}</span> },
-    { key: 'name', label: '机构名称', render: (row) => <span className="primary-cell"><strong>{row.name}</strong><small>{row.creditCode ?? '未填写统一信用代码'}</small></span> },
+    { key: 'name', label: '机构名称', render: (row) => <span className="primary-cell"><strong>{row.name}</strong></span> },
     { key: 'platform', label: '入库平台', render: (row) => row.platform },
     { key: 'pm', label: '负责 PM', render: (row) => row.owner.displayName },
     { key: 'contact', label: '联系人', render: (row) => <span>{row.contactName ?? '—'}<small className="block-muted">{row.contactPhone}</small></span> },
@@ -42,12 +42,12 @@ export function OrganizationsPage({ roleType }: { roleType: 'SUPPORTER' | 'EXECU
   ];
   return <div className="page-enter">
     <PageHeader eyebrow={`基础资料 / ${isSupporter ? '支持方' : '执行方'}`} title={`${isSupporter ? '支持方' : '执行方'}库`} description={isSupporter ? '签署支持协议时自动查重并复用已有机构。' : '记录参与遴选的执行机构，中选后可登记执行协议。'} action={<button className="button primary" onClick={() => setModal(true)}><Plus size={17} />新增{isSupporter ? '支持方' : '执行方'}</button>} />
-    <div className="toolbar"><SearchBar value={q} onChange={setQ} placeholder="搜索机构编号、名称或信用代码" /><span className="result-count">{list.data?.total ?? 0} 家机构</span></div>
+    <div className="toolbar"><SearchBar value={q} onChange={setQ} placeholder="搜索机构编号或名称" /><span className="result-count">{list.data?.total ?? 0} 家机构</span></div>
     <section className="panel table-panel">{list.isLoading ? <LoadingState /> : list.error ? <ErrorState error={list.error} /> : <DataTable columns={columns} rows={list.data?.items ?? []} rowKey={(row) => row.id} />}</section>
-    <Modal open={modal || Boolean(editing)} onClose={() => { setModal(false); setEditing(null); }} title={`${editing ? '编辑' : '新增'}${isSupporter ? '支持方' : '执行方'}`} description="系统会按机构名称和统一社会信用代码检查重复。" size="large">
+    <Modal open={modal || Boolean(editing)} onClose={() => { setModal(false); setEditing(null); }} title={`${editing ? '编辑' : '新增'}${isSupporter ? '支持方' : '执行方'}`} description="系统会按规范化后的机构名称检查重复。" size="large">
       <form key={editing?.id ?? 'new'} className="form-grid" onSubmit={(event: FormEvent<HTMLFormElement>) => { event.preventDefault(); save.mutate(formObject(event.currentTarget)); }}>
         <Field label="机构名称" span={2}><Input name="name" required defaultValue={editing?.name ?? ''} /></Field>
-        <Field label="统一社会信用代码"><Input name="creditCode" defaultValue={editing?.creditCode ?? ''} /></Field><Field label="入库平台"><Input name="platform" required defaultValue={editing?.platform ?? ''} /></Field>
+        <Field label="入库平台" span={2}><Input name="platform" required defaultValue={editing?.platform ?? ''} /></Field>
         <Field label="负责 PM"><Select name="ownerUserId" required defaultValue={editing?.ownerUserId ?? editing?.owner.id ?? ''}><option value="">请选择</option>{users.data?.map((user) => <option key={user.id} value={user.id}>{user.displayName}</option>)}</Select></Field>
         <Field label="联系人"><Input name="contactName" defaultValue={editing?.contactName ?? ''} /></Field><Field label="联系电话"><Input name="contactPhone" defaultValue={editing?.contactPhone ?? ''} /></Field>
         {editing && <Field label="资料状态"><Select name="status" defaultValue={editing.status}><option value="ACTIVE">启用</option><option value="INACTIVE">停用</option></Select></Field>}

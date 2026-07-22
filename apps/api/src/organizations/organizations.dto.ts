@@ -9,7 +9,6 @@ export class OrganizationListQueryDto extends ListQueryDto {
 
 export class CreateOrganizationDto {
   @IsString() @MaxLength(200) name!: string;
-  @IsOptional() @IsString() @MaxLength(32) creditCode?: string;
   @IsString() @MaxLength(100) platform!: string;
   @IsUUID() ownerUserId!: string;
   @IsOptional() @IsString() @MaxLength(100) contactName?: string;
@@ -19,7 +18,6 @@ export class CreateOrganizationDto {
 
 export class UpdateOrganizationDto {
   @IsOptional() @IsString() @MaxLength(200) name?: string;
-  @IsOptional() @IsString() @MaxLength(32) creditCode?: string;
   @IsOptional() @IsString() @MaxLength(100) platform?: string;
   @IsOptional() @IsUUID() ownerUserId?: string;
   @IsOptional() @IsString() @MaxLength(100) contactName?: string;

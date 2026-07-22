@@ -50,7 +50,6 @@ export interface Organization {
   id: string;
   organizationCode: string;
   name: string;
-  creditCode?: string;
   platform: string;
   contactName?: string;
   contactPhone?: string;

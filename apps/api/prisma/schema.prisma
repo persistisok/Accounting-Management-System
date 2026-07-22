@@ -174,8 +174,7 @@ model Organization {
   id               String       @id @default(uuid()) @db.Uuid
   organizationCode String       @unique @map("organization_code") @db.VarChar(32)
   name             String       @db.VarChar(200)
-  normalizedName   String       @map("normalized_name") @db.VarChar(200)
-  creditCode       String?      @unique @map("credit_code") @db.VarChar(32)
+  normalizedName   String       @unique @map("normalized_name") @db.VarChar(200)
   platform         String       @db.VarChar(100)
   ownerUserId      String       @map("owner_user_id") @db.Uuid
   contactName      String?      @map("contact_name") @db.VarChar(100)
@@ -190,7 +189,6 @@ model Organization {
   contracts  Contract[]
   candidates ProjectExecutorCandidate[]
 
-  @@index([normalizedName])
   @@map("organizations")
 }
 
