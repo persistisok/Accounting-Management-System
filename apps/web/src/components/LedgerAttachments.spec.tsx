@@ -10,6 +10,11 @@ function UploadHarness({ existingCount = 0 }: { existingCount?: number }) {
   return <PdfAttachmentInput files={files} onFilesChange={setFiles} existingCount={existingCount} />;
 }
 
+function ProjectUploadHarness() {
+  const [files, setFiles] = useState<File[]>([]);
+  return <PdfAttachmentInput projectFiles files={files} onFilesChange={setFiles} />;
+}
+
 describe('PdfAttachmentInput', () => {
   it('adds one file at a time and allows pending files to be removed', () => {
     const { container } = render(<UploadHarness existingCount={2} />);
@@ -33,5 +38,15 @@ describe('PdfAttachmentInput', () => {
     const { container } = render(<UploadHarness existingCount={10} />);
     expect((container.querySelector('input[type="file"]') as HTMLInputElement).disabled).toBe(true);
     expect(screen.getByText('已达到最多 10 份附件的限制。')).toBeTruthy();
+  });
+
+  it('accepts project archives and rejects unsupported project file types', () => {
+    const { container } = render(<ProjectUploadHarness />);
+    const input = container.querySelector('input[type="file"]')!;
+    fireEvent.change(input, { target: { files: [new File(['PK'], 'archive.zip', { type: 'application/zip' })] } });
+    expect(screen.getByText('archive.zip')).toBeTruthy();
+
+    fireEvent.change(input, { target: { files: [new File(['MZ'], 'program.exe')] } });
+    expect(screen.getByText('仅支持 PDF、ZIP、RAR 或 7Z 文件。')).toBeTruthy();
   });
 });

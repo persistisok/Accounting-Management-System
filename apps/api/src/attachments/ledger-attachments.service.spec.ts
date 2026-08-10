@@ -61,4 +61,38 @@ describe('LedgerAttachmentsService', () => {
       buffer: pdf,
     }, crypto.randomUUID())).rejects.toThrow('每条业务记录最多上传 10 份附件');
   });
+
+  it('supports membership attachments and applies the same ten-file limit', async () => {
+    const limitedService = new LedgerAttachmentsService(
+      config,
+      {
+        membership: { findUnique: async () => ({ id: crypto.randomUUID() }) },
+        attachment: { count: async () => 10 },
+      } as unknown as PrismaService,
+      {} as AuditService,
+    );
+    const pdf = Buffer.from('%PDF-1.7');
+    await expect(limitedService.upload('MEMBERSHIP', crypto.randomUUID(), {
+      originalname: 'member.pdf', mimetype: 'application/pdf', size: pdf.length, buffer: pdf,
+    }, crypto.randomUUID())).rejects.toThrow('每条业务记录最多上传 10 份附件');
+  });
+
+  it('rejects unsupported project multipart file signatures before contacting OSS', async () => {
+    const projectId = crypto.randomUUID();
+    const ossService = new LedgerAttachmentsService(
+      new ConfigService({ OSS_ENABLED: 'true', JWT_SECRET: 'test-secret' }),
+      {
+        project: { findUnique: async () => ({ id: projectId }) },
+        attachment: { count: async () => 0 },
+      } as unknown as PrismaService,
+      {} as AuditService,
+    );
+    await expect(ossService.initProjectMultipart(
+      projectId,
+      'payload.exe',
+      100,
+      Buffer.from('MZ').toString('base64'),
+      crypto.randomUUID(),
+    )).rejects.toThrow('项目附件仅支持有效的 PDF、ZIP、RAR 或 7Z 文件');
+  });
 });

@@ -1,5 +1,5 @@
 import { createParamDecorator, ExecutionContext } from '@nestjs/common';
-import { UserRole } from '@prisma/client';
+import { PermissionLevel, PermissionResource, UserRole } from '@prisma/client';
 
 export interface AuthUser {
   id: string;
@@ -7,6 +7,7 @@ export interface AuthUser {
   displayName: string;
   role: UserRole;
   projectManagerId: string | null;
+  permissions: { resource: PermissionResource; level: PermissionLevel }[];
 }
 
 export const CurrentUser = createParamDecorator(

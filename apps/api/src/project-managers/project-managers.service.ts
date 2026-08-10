@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { Prisma } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
 import { PrismaService } from '../prisma.service';
+import type { AuthUser } from '../common/current-user.decorator';
 import { CreateProjectManagerDto, ProjectManagerListQueryDto, UpdateProjectManagerDto } from './project-managers.dto';
 
 const publicProjectManagerSelect = {
@@ -39,9 +40,9 @@ export class ProjectManagersService {
     return { items, total };
   }
 
-  async options() {
+  async options(user?: AuthUser) {
     return this.prisma.projectManager.findMany({
-      where: { status: 'ACTIVE' },
+      where: { status: 'ACTIVE', ...(user?.role === 'PM' ? { id: user.projectManagerId ?? '__unbound_pm__' } : {}) },
       select: { id: true, displayName: true, department: true, status: true },
       orderBy: { displayName: 'asc' },
     });

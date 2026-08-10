@@ -9,7 +9,7 @@
 - 数据库：PostgreSQL
 - 部署：Docker Compose、Nginx、Redis、MinIO
 
-完整架构和业务规则见 [设计方案](docs/业务数据管理系统设计方案.md)。
+完整架构和业务规则见 [设计方案](docs/业务数据管理系统设计方案.md)，日常操作见 [用户使用手册](docs/用户使用手册.md)。
 
 ## 本地开发
 

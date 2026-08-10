@@ -1,5 +1,5 @@
 import { DueStatus, RecordStatus } from '@prisma/client';
-import { IsDateString, IsEnum, IsNumberString, IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
+import { IsBooleanString, IsDateString, IsEnum, IsNumberString, IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
 import { ListQueryDto } from '../common/query.dto';
 
 export class MembershipListQueryDto extends ListQueryDto {
@@ -27,6 +27,8 @@ export class CreateMembershipDto {
   @IsString() @MaxLength(200) memberName!: string;
   @IsUUID() committeeId!: string;
   @IsString() @MaxLength(50) memberType!: string;
+  @IsString() @MaxLength(50) memberPosition!: string;
+  @IsBooleanString() certificateIssued!: string;
   @IsUUID() pmUserId!: string;
   @IsOptional() @IsDateString() joinedOn?: string;
 }
@@ -35,6 +37,8 @@ export class UpdateMembershipDto {
   @IsOptional() @IsString() @MaxLength(200) memberName?: string;
   @IsOptional() @IsUUID() committeeId?: string;
   @IsOptional() @IsString() @MaxLength(50) memberType?: string;
+  @IsOptional() @IsString() @MaxLength(50) memberPosition?: string;
+  @IsOptional() @IsBooleanString() certificateIssued?: string;
   @IsOptional() @IsUUID() pmUserId?: string;
   @IsOptional() @IsDateString() joinedOn?: string;
   @IsOptional() @IsEnum(RecordStatus) status?: RecordStatus;

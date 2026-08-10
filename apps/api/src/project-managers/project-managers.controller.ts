@@ -12,26 +12,26 @@ export class ProjectManagersController {
   constructor(private readonly projectManagers: ProjectManagersService) {}
 
   @Get('options')
-  options() { return this.projectManagers.options(); }
+  options(@CurrentUser() user: AuthUser) { return this.projectManagers.options(user); }
 
   @Get()
-  @Roles('SYSTEM_ADMIN', 'ADMIN')
+  @Roles('SYSTEM_ADMIN')
   list(@Query() query: ProjectManagerListQueryDto) { return this.projectManagers.list(query); }
 
   @Post()
-  @Roles('SYSTEM_ADMIN', 'ADMIN')
+  @Roles('SYSTEM_ADMIN')
   create(@Body() dto: CreateProjectManagerDto, @CurrentUser() user: AuthUser) {
     return this.projectManagers.create(dto, user.id);
   }
 
   @Patch(':id')
-  @Roles('SYSTEM_ADMIN', 'ADMIN')
+  @Roles('SYSTEM_ADMIN')
   update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateProjectManagerDto, @CurrentUser() user: AuthUser) {
     return this.projectManagers.update(id, dto, user.id);
   }
 
   @Delete(':id')
-  @Roles('SYSTEM_ADMIN', 'ADMIN')
+  @Roles('SYSTEM_ADMIN')
   remove(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: AuthUser) {
     return this.projectManagers.remove(id, user.id);
   }

@@ -31,7 +31,7 @@ export function ProjectDetailPage() {
     <section className="panel detail-panel">
       {tab === 'overview' && <div className="overview-grid">
         <Info label="项目编码" value={data.projectCode} mono /><Info label="发布日期" value={formatDate(data.publishedOn)} /><Info label="项目经理" value={data.pmName} /><Info label="项目性质" value={data.nature} />
-        <Info label="立项金额" value={formatMoney(data.approvedAmount)} /><Info label="执行成本" value={formatMoney(data.executionCost)} /><Info label="项目周期" value={formatProjectPeriod(data.periodMonths)} /><Info label="备注" value={data.remark || '暂无备注'} />
+        <Info label="项目类型" value={data.projectType} /><Info label="项目状态" value={statusLabels[data.status] ?? data.status} /><Info label="归档状态" value={statusLabels[data.archiveStatus] ?? data.archiveStatus} /><Info label="立项金额" value={formatMoney(data.approvedAmount)} /><Info label="执行成本" value={formatMoney(data.executionCost)} /><Info label="项目周期" value={formatProjectPeriod(data.periodMonths)} /><Info label="状态复核人" value={data.statusReviewer?.displayName ?? '尚无'} /><Info label="归档复核人" value={data.archiveReviewer?.displayName ?? '尚无'} /><Info label="备注" value={data.remark || '暂无备注'} />
       </div>}
       {tab === 'contracts' && <DataTable columns={contractColumns} rows={data.contracts ?? []} rowKey={(row) => row.id} />}
       {tab === 'banking' && <DataTable columns={allocationColumns} rows={data.allocations ?? []} rowKey={(row) => row.id} />}
@@ -57,10 +57,11 @@ const allocationColumns: TableColumn<BankAllocation>[] = [
   { key: 'status', label: '状态', render: (row) => <StatusChip value={row.status} /> },
 ];
 const invoiceColumns: TableColumn<Invoice>[] = [
-  { key: 'type', label: '开票类型', render: (row) => row.invoiceType },
+  { key: 'direction', label: '发票方向', render: (row) => <StatusChip value={row.direction} /> },
+  { key: 'type', label: '发票类型', render: (row) => row.invoiceType },
   { key: 'platform', label: '开票平台', render: (row) => row.invoicePlatform },
-  { key: 'buyer', label: '购买方', render: (row) => row.buyerName },
-  { key: 'date', label: '开票日期', render: (row) => formatDate(row.issuedOn) },
+  { key: 'buyer', label: '相对方', render: (row) => row.buyerName },
+  { key: 'date', label: '发票日期', render: (row) => formatDate(row.issuedOn) },
   { key: 'amount', label: '价税合计', className: 'number', render: (row) => formatMoney(row.totalAmount) },
   { key: 'status', label: '状态', render: (row) => <StatusChip value={row.status} /> },
 ];

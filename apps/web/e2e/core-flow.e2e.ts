@@ -48,6 +48,8 @@ test('新建项目弹窗覆盖完整视口且表单可滚动', async ({ page }) 
   await expect(page.locator('input[name="periodValue"]')).toHaveCount(1);
   await expect(page.locator('select[name="periodUnit"]')).toHaveCount(1);
   await expect(page.locator('input[name="executionCost"]')).toHaveCount(1);
+  await expect(page.locator('input[name="platformAbbreviation"]')).toHaveAttribute('pattern', '[A-Za-z]{1,10}');
+  await expect(page.getByRole('dialog').getByLabel('项目类型')).toHaveCount(1);
   await expect(page.locator('input[name="period"], input[name="periodStart"], input[name="periodEnd"], input[name="executionBudget"]')).toHaveCount(0);
   await expect(page.getByRole('dialog').locator('input[placeholder]:not(.date-display):not(.searchable-input), textarea[placeholder]')).toHaveCount(0);
   await expect(page.getByRole('dialog').getByPlaceholder('年/月/日')).toBeVisible();
@@ -295,7 +297,7 @@ test('访客账号只能查看且不能进入系统管理', async ({ page }) => 
   await page.getByRole('button', { name: '确认停用' }).click();
 });
 
-test('普通管理员可编辑业务但不能管理账号', async ({ page }) => {
+test('普通管理员可按授权编辑业务但不能管理系统', async ({ page }) => {
   const suffix = Date.now();
   const username = `admin.e2e.${suffix}`;
   await login(page);
@@ -305,6 +307,7 @@ test('普通管理员可编辑业务但不能管理账号', async ({ page }) => 
   await dialog.getByLabel('姓名').fill(`普通管理员${String(suffix).slice(-4)}`);
   await dialog.getByLabel('登录用户名').fill(username);
   await dialog.getByLabel('账号类型').selectOption('ADMIN');
+  await dialog.getByLabel('项目台账权限').selectOption('EDIT');
   await dialog.getByLabel('初始密码').fill('AdminTest123!');
   await dialog.getByRole('button', { name: '创建账号' }).click();
   await expect(page.getByRole('row').filter({ hasText: username })).toContainText('普通管理员');
@@ -314,7 +317,7 @@ test('普通管理员可编辑业务但不能管理账号', async ({ page }) => 
   await page.getByLabel('密码').fill('AdminTest123!');
   await page.getByRole('button', { name: /登录/ }).click();
   await expect(page.getByRole('button', { name: '新建项目' })).toBeVisible();
-  await expect(page.getByRole('link', { name: 'PM 管理' })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'PM 管理' })).toHaveCount(0);
   await expect(page.getByRole('link', { name: '账号管理' })).toHaveCount(0);
   await page.goto('/accounts');
   await expect(page).toHaveURL(/\/projects$/);

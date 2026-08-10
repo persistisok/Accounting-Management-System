@@ -1,5 +1,5 @@
 import { OrganizationRoleType, RecordStatus } from '@prisma/client';
-import { IsEnum, IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
+import { IsDateString, IsEnum, IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
 import { ListQueryDto } from '../common/query.dto';
 
 export class OrganizationListQueryDto extends ListQueryDto {
@@ -10,6 +10,7 @@ export class OrganizationListQueryDto extends ListQueryDto {
 export class CreateOrganizationDto {
   @IsString() @MaxLength(200) name!: string;
   @IsString() @MaxLength(100) platform!: string;
+  @IsOptional() @IsDateString() joinedOn?: string;
   @IsUUID() ownerUserId!: string;
   @IsOptional() @IsString() @MaxLength(100) contactName?: string;
   @IsOptional() @IsString() @MaxLength(30) contactPhone?: string;
@@ -19,6 +20,7 @@ export class CreateOrganizationDto {
 export class UpdateOrganizationDto {
   @IsOptional() @IsString() @MaxLength(200) name?: string;
   @IsOptional() @IsString() @MaxLength(100) platform?: string;
+  @IsOptional() @IsDateString() joinedOn?: string;
   @IsOptional() @IsUUID() ownerUserId?: string;
   @IsOptional() @IsString() @MaxLength(100) contactName?: string;
   @IsOptional() @IsString() @MaxLength(30) contactPhone?: string;

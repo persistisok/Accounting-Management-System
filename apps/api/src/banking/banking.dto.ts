@@ -1,5 +1,5 @@
 import { AllocationCategory, RecordStatus, TransactionDirection } from '@prisma/client';
-import { IsDateString, IsEnum, IsIn, IsNumberString, IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
+import { IsEnum, IsIn, IsNumberString, IsOptional, IsString, IsUUID, Matches, MaxLength } from 'class-validator';
 import { ListQueryDto } from '../common/query.dto';
 
 export class TransactionListQueryDto extends ListQueryDto {
@@ -26,7 +26,7 @@ export class CreateTransactionDto {
   @IsOptional() @IsUUID() expertProfileId?: string;
   @IsOptional() @IsUUID() membershipId?: string;
   @IsIn(['SUPPORT_RECEIPT', 'MEMBER_DUE', 'EXECUTION_PAYMENT', 'EXPERT_FEE']) category!: AllocationCategory;
-  @IsDateString() transactionAt!: string;
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: '交易日期格式必须为年-月-日' }) transactionAt!: string;
   @IsString() @MaxLength(200) counterpartyName!: string;
   @IsString() @MaxLength(200) counterpartyBankName!: string;
   @IsString() @MaxLength(64) counterpartyAccountNumber!: string;
@@ -41,7 +41,7 @@ export class UpdateTransactionDto {
   @IsOptional() @IsUUID() expertProfileId?: string;
   @IsOptional() @IsUUID() membershipId?: string;
   @IsOptional() @IsIn(['SUPPORT_RECEIPT', 'MEMBER_DUE', 'EXECUTION_PAYMENT', 'EXPERT_FEE']) category?: AllocationCategory;
-  @IsOptional() @IsDateString() transactionAt?: string;
+  @IsOptional() @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: '交易日期格式必须为年-月-日' }) transactionAt?: string;
   @IsOptional() @IsString() @MaxLength(200) counterpartyName?: string;
   @IsOptional() @IsString() @MaxLength(200) counterpartyBankName?: string;
   @IsOptional() @IsString() @MaxLength(64) counterpartyAccountNumber?: string;

@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { AuditService } from '../audit/audit.service';
 import { attachmentMap } from '../attachments/attachment-view';
 import { PrismaService } from '../prisma.service';
+import type { AuthUser } from '../common/current-user.decorator';
 import { ContractListQueryDto, CreateContractDto, UpdateContractDto } from './contracts.dto';
 
 export function formatInternalContractNo(id: string) {
@@ -14,10 +15,11 @@ export function formatInternalContractNo(id: string) {
 export class ContractsService {
   constructor(private readonly prisma: PrismaService, private readonly audit: AuditService) {}
 
-  async list(query: ContractListQueryDto) {
+  async list(query: ContractListQueryDto, user?: AuthUser) {
     const where: Prisma.ContractWhereInput = {
       ...(query.projectId ? { projectId: query.projectId } : {}),
       ...(query.status ? { status: query.status } : {}),
+      ...(user?.role === 'PM' ? { project: { pmUserId: user.projectManagerId ?? '__unbound_pm__' } } : {}),
       ...(query.q ? { OR: [
         { project: { name: { contains: query.q, mode: 'insensitive' } } },
         { project: { projectCode: { contains: query.q, mode: 'insensitive' } } },
@@ -42,8 +44,8 @@ export class ContractsService {
     return { items: items.map((item) => ({ ...item, attachments: attachments[item.id] ?? [] })), total };
   }
 
-  async create(dto: CreateContractDto, actorUserId: string) {
-    await this.validateRules(dto);
+  async create(dto: CreateContractDto, actorUserId: string, user?: AuthUser) {
+    await this.validateRules(dto, user);
     const contract = await this.prisma.contract.create({
       data: {
         projectId: dto.projectId,
@@ -65,8 +67,10 @@ export class ContractsService {
     return contract;
   }
 
-  async update(id: string, dto: UpdateContractDto, actorUserId: string) {
-    const before = await this.prisma.contract.findUnique({ where: { id } });
+  async update(id: string, dto: UpdateContractDto, actorUserId: string, user?: AuthUser) {
+    const before = user?.role === 'PM'
+      ? await this.prisma.contract.findFirst({ where: { id, project: { pmUserId: user.projectManagerId ?? '__unbound_pm__' } } })
+      : await this.prisma.contract.findUnique({ where: { id } });
     if (!before) throw new NotFoundException('合同不存在');
     if (before.status === 'VOID' || before.status === 'TERMINATED') throw new BadRequestException('已作废或终止的合同不能编辑');
     const merged = {
@@ -75,7 +79,7 @@ export class ContractsService {
       contractType: dto.contractType ?? before.contractType,
       amount: dto.amount ?? before.amount.toString(),
     };
-    await this.validateRules(merged);
+    await this.validateRules(merged, user);
     const contract = await this.prisma.contract.update({
       where: { id },
       data: {
@@ -100,8 +104,10 @@ export class ContractsService {
     return contract;
   }
 
-  async setStatus(id: string, status: ContractStatus, actorUserId: string) {
-    const before = await this.prisma.contract.findUnique({ where: { id } });
+  async setStatus(id: string, status: ContractStatus, actorUserId: string, user?: AuthUser) {
+    const before = user?.role === 'PM'
+      ? await this.prisma.contract.findFirst({ where: { id, project: { pmUserId: user.projectManagerId ?? '__unbound_pm__' } } })
+      : await this.prisma.contract.findUnique({ where: { id } });
     if (!before) throw new NotFoundException('合同不存在');
     const contract = await this.prisma.contract.update({ where: { id }, data: { status, version: { increment: 1 } } });
     await this.audit.record({
@@ -111,14 +117,18 @@ export class ContractsService {
     return contract;
   }
 
-  private async validateRules(dto: { counterpartyId: string; projectId: string; contractType: ContractType; amount: string }) {
+  private async validateRules(dto: { counterpartyId: string; projectId: string; contractType: ContractType; amount: string }, user?: AuthUser) {
     if (Number(dto.amount) <= 0) throw new BadRequestException('合同金额必须大于零');
+    if (user?.role === 'PM') {
+      const project = await this.prisma.project.findFirst({ where: { id: dto.projectId, pmUserId: user.projectManagerId ?? '__unbound_pm__' }, select: { id: true } });
+      if (!project) throw new NotFoundException('关联项目不存在或不属于当前 PM');
+    }
     const role = await this.prisma.organizationRole.findFirst({
       where: {
         organizationId: dto.counterpartyId,
         roleType: dto.contractType === 'SUPPORT' ? 'SUPPORTER' : 'EXECUTOR',
         reviewStatus: 'APPROVED',
-        organization: { status: 'ACTIVE' },
+        organization: { status: 'ACTIVE', ...(user?.role === 'PM' ? { ownerUserId: user.projectManagerId ?? '__unbound_pm__' } : {}) },
       },
     });
     if (!role) throw new BadRequestException(dto.contractType === 'SUPPORT' ? '请选择有效支持方' : '请选择有效执行方');

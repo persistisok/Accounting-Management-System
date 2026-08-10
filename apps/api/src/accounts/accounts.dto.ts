@@ -1,11 +1,16 @@
-import { RecordStatus, UserRole } from '@prisma/client';
-import { Transform } from 'class-transformer';
-import { IsEnum, IsOptional, IsString, IsUUID, MaxLength, MinLength } from 'class-validator';
+import { PermissionLevel, PermissionResource, RecordStatus, UserRole } from '@prisma/client';
+import { Transform, Type } from 'class-transformer';
+import { IsArray, IsEnum, IsOptional, IsString, IsUUID, MaxLength, MinLength, ValidateNested } from 'class-validator';
 import { ListQueryDto } from '../common/query.dto';
 
 export class AccountListQueryDto extends ListQueryDto {
   @IsOptional() @IsEnum(UserRole) role?: UserRole;
   @IsOptional() @IsEnum(RecordStatus) status?: RecordStatus;
+}
+
+export class AccountPermissionDto {
+  @IsEnum(PermissionResource) resource!: PermissionResource;
+  @IsEnum(PermissionLevel) level!: PermissionLevel;
 }
 
 export class CreateAccountDto {
@@ -15,6 +20,8 @@ export class CreateAccountDto {
   @IsEnum(UserRole) role!: UserRole;
   @Transform(({ value }) => value === '' ? null : value)
   @IsOptional() @IsUUID() projectManagerId?: string | null;
+  @IsOptional() @IsArray() @ValidateNested({ each: true }) @Type(() => AccountPermissionDto)
+  permissions?: AccountPermissionDto[];
 }
 
 export class UpdateAccountDto {
@@ -25,4 +32,6 @@ export class UpdateAccountDto {
   @Transform(({ value }) => value === '' ? null : value)
   @IsOptional() @IsUUID() projectManagerId?: string | null;
   @IsOptional() @IsEnum(RecordStatus) status?: RecordStatus;
+  @IsOptional() @IsArray() @ValidateNested({ each: true }) @Type(() => AccountPermissionDto)
+  permissions?: AccountPermissionDto[];
 }

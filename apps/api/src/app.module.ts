@@ -7,6 +7,7 @@ import { AuditModule } from './audit/audit.module';
 import { BankingModule } from './banking/banking.module';
 import { ContractsModule } from './contracts/contracts.module';
 import { ExpertsModule } from './experts/experts.module';
+import { ExportsModule } from './exports/exports.module';
 import { HealthModule } from './health/health.module';
 import { InvoicesModule } from './invoices/invoices.module';
 import { MembershipsModule } from './memberships/memberships.module';
@@ -31,6 +32,7 @@ import { ProjectManagersModule } from './project-managers/project-managers.modul
     BankingModule,
     InvoicesModule,
     ExpertsModule,
+    ExportsModule,
     MembershipsModule,
   ],
 })

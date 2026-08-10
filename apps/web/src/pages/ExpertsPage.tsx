@@ -6,6 +6,7 @@ import { DataTable, type TableColumn } from '../components/DataTable';
 import { DateInput, Field, FormActions, Input, SearchableSelect } from '../components/FormControls';
 import { PdfAttachmentInput } from '../components/LedgerAttachments';
 import { Modal } from '../components/Modal';
+import { LedgerExportButton } from '../components/LedgerExportButton';
 import { PageHeader } from '../components/PageHeader';
 import { DEFAULT_PAGE_SIZE, Pagination } from '../components/Pagination';
 import { SearchBar } from '../components/SearchBar';
@@ -13,6 +14,7 @@ import { ErrorState, LoadingState } from '../components/States';
 import { StatusChip } from '../components/StatusChip';
 import { api, queryString } from '../lib/api';
 import { useAuth } from '../lib/auth';
+import { hasPermission } from '../lib/permissions';
 import { formObject } from '../lib/form';
 import { formatDate } from '../lib/format';
 import type { Expert, ExpertCredential, ExpertSensitiveDetails, ListResponse, ProjectManager } from '../lib/types';
@@ -42,11 +44,11 @@ export function ExpertsPage() {
   const queryClient = useQueryClient();
   const experts = useQuery({ queryKey: ['experts', q, page], queryFn: () => api.get<ListResponse<Expert>>(`/experts${queryString({ q, page, pageSize: DEFAULT_PAGE_SIZE })}`) });
   const projectManagers = useQuery({ queryKey: ['project-manager-options'], queryFn: () => api.get<ProjectManager[]>('/project-managers/options') });
-  const canManage = user?.role === 'SYSTEM_ADMIN' || user?.role === 'ADMIN';
+  const canManage = hasPermission(user, 'EXPERTS', 'EDIT');
   const canDeactivate = canManage;
-  const canReview = canManage;
-  const canDownloadCredential = canManage || canReview;
-  const canViewSensitive = canManage || canReview;
+  const canReview = hasPermission(user, 'EXPERTS', 'REVIEW');
+  const canDownloadCredential = canManage;
+  const canViewSensitive = canManage;
 
   const save = useMutation({
     mutationFn: async ({ body, files }: { body: Record<string, string>; files: File[] }) => {
@@ -168,7 +170,7 @@ export function ExpertsPage() {
     } });
 
   return <div className="page-enter">
-    <PageHeader eyebrow="基础资料 / 专家" title="专家库" description="专家身份、职业资质、收款资料和复核责任统一归档。" action={canManage ? <button className="button primary" onClick={() => openEditor()}><Plus size={17} />新增专家</button> : undefined} />
+    <PageHeader eyebrow="基础资料 / 专家" title="专家库" description="专家身份、职业资质、收款资料和复核责任统一归档。" action={(user?.role === 'SYSTEM_ADMIN' || canManage) ? <div className="button-group">{user?.role === 'SYSTEM_ADMIN' && <LedgerExportButton dataset="experts" fileName="专家库_完整信息" filters={{ q }} sensitive />}{canManage && <button className="button primary" onClick={() => openEditor()}><Plus size={17} />新增专家</button>}</div> : undefined} />
     <div className="privacy-banner"><ShieldCheck size={18} /><span><strong>敏感信息保护已启用</strong> 列表仅显示脱敏值。</span></div>
     {notice && <div className="operation-banner">{notice}</div>}
     <div className="toolbar"><SearchBar value={q} onChange={(value) => { setQ(value); setPage(1); }} placeholder="搜索专家姓名、单位或科室" /><span className="result-count">{experts.data?.total ?? 0} 位专家</span></div>

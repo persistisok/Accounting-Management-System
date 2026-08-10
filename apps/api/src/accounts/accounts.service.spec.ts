@@ -42,16 +42,28 @@ describe('AccountsService', () => {
     }) }));
   });
 
-  it('allows an administrator to bind an active unbound PM', async () => {
+  it('only allows a PM account to bind an active unbound PM', async () => {
     prisma.projectManager.findFirst.mockResolvedValue({ id: '00000000-0000-0000-0000-000000000099' });
-    prisma.user.create.mockResolvedValue({ ...account, role: 'ADMIN', projectManagerId: '00000000-0000-0000-0000-000000000099' });
+    prisma.user.create.mockResolvedValue({ ...account, role: 'PM', projectManagerId: '00000000-0000-0000-0000-000000000099' });
+
+    await service.create({
+      username: 'manager', password: 'Password123!', displayName: '项目经理', role: 'PM', projectManagerId: '00000000-0000-0000-0000-000000000099',
+    }, 'admin-id');
+
+    expect(prisma.user.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({
+      role: 'PM', projectManagerId: '00000000-0000-0000-0000-000000000099',
+    }) }));
+  });
+
+  it('ignores a PM binding supplied for a regular administrator', async () => {
+    prisma.user.create.mockResolvedValue({ ...account, role: 'ADMIN', projectManager: null });
 
     await service.create({
       username: 'manager', password: 'Password123!', displayName: '管理员', role: 'ADMIN', projectManagerId: '00000000-0000-0000-0000-000000000099',
     }, 'admin-id');
 
     expect(prisma.user.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({
-      role: 'ADMIN', projectManagerId: '00000000-0000-0000-0000-000000000099',
+      role: 'ADMIN', projectManagerId: null,
     }) }));
   });
 
@@ -72,7 +84,7 @@ describe('AccountsService', () => {
     prisma.user.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: 'other-account' });
 
     await expect(service.create({
-      username: 'manager', password: 'Password123!', displayName: '管理员', role: 'ADMIN', projectManagerId: '00000000-0000-0000-0000-000000000099',
+      username: 'manager', password: 'Password123!', displayName: '项目经理', role: 'PM', projectManagerId: '00000000-0000-0000-0000-000000000099',
     }, 'admin-id')).rejects.toThrow(ConflictException);
   });
 
@@ -82,5 +94,29 @@ describe('AccountsService', () => {
     await expect(service.update(account.id, { status: 'INACTIVE' }, account.id)).rejects.toThrow(BadRequestException);
     await expect(service.update(account.id, { role: 'ADMIN' }, account.id)).rejects.toThrow(BadRequestException);
     expect(prisma.user.update).not.toHaveBeenCalled();
+  });
+
+  it('releases the PM binding when an account is deactivated', async () => {
+    const pmId = '00000000-0000-0000-0000-000000000099';
+    prisma.user.findUnique.mockResolvedValue({ ...account, role: 'PM', projectManagerId: pmId, permissions: [] });
+    prisma.projectManager.findFirst.mockResolvedValue({ id: pmId });
+    prisma.user.update.mockResolvedValue({ ...account, role: 'PM', status: 'INACTIVE', projectManagerId: null, projectManager: null });
+
+    await service.update(account.id, { status: 'INACTIVE' }, 'system-admin-id');
+
+    expect(prisma.user.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({
+      status: 'INACTIVE', projectManager: { disconnect: true },
+    }) }));
+  });
+
+  it('releases the PM binding through the quick deactivate action', async () => {
+    prisma.user.findUnique.mockResolvedValue({ ...account, role: 'PM', projectManagerId: '00000000-0000-0000-0000-000000000099', permissions: [] });
+    prisma.user.update.mockResolvedValue({ ...account, status: 'INACTIVE', projectManagerId: null, projectManager: null });
+
+    await service.remove(account.id, 'system-admin-id');
+
+    expect(prisma.user.update).toHaveBeenCalledWith(expect.objectContaining({ data: {
+      status: 'INACTIVE', projectManager: { disconnect: true },
+    } }));
   });
 });

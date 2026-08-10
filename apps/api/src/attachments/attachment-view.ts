@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma.service';
 
-export type LedgerAttachmentObjectType = 'PROJECT' | 'CONTRACT' | 'BANK_TRANSACTION' | 'INVOICE';
+export type LedgerAttachmentObjectType = 'PROJECT' | 'CONTRACT' | 'BANK_TRANSACTION' | 'INVOICE' | 'MEMBERSHIP';
 
 const publicAttachmentSelect = {
   id: true,

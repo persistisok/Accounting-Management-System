@@ -7,7 +7,7 @@ describe('MembershipsService committee uniqueness', () => {
   const prisma = {
     projectManager: { findFirst: vi.fn() },
     committee: { findMany: vi.fn(), count: vi.fn(), findFirst: vi.fn(), create: vi.fn(), findUnique: vi.fn(), update: vi.fn() },
-    membership: { findUnique: vi.fn(), findMany: vi.fn() },
+    membership: { findUnique: vi.fn(), findMany: vi.fn(), create: vi.fn() },
     memberDue: { findMany: vi.fn(), count: vi.fn() },
     $transaction: vi.fn(),
   };
@@ -83,5 +83,21 @@ describe('MembershipsService committee uniqueness', () => {
     await expect(service.paymentOptions()).resolves.toEqual([expect.objectContaining({
       id: 'member-id', memberName: '测试会员', outstandingAmount: '260.00', dueCount: 2,
     })]);
+  });
+
+  it('stores the manually entered position and certificate flag', async () => {
+    prisma.committee.findFirst.mockResolvedValue({ id: 'committee-id' });
+    prisma.membership.create.mockResolvedValue({
+      id: 'member-id', memberName: '测试会员', committeeId: 'committee-id', certificateIssued: true,
+    });
+
+    await service.createMembership({
+      memberName: '测试会员', committeeId: 'committee-id', memberType: '个人会员',
+      memberPosition: '副主任委员', certificateIssued: 'true', pmUserId: 'pm-id', joinedOn: '2026-08-10',
+    }, 'admin-id');
+
+    expect(prisma.membership.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ memberPosition: '副主任委员', certificateIssued: true }),
+    }));
   });
 });

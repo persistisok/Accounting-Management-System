@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma, UserRole } from '@prisma/client';
+import { PermissionLevel, PermissionResource, Prisma, UserRole } from '@prisma/client';
 import { hash } from 'bcryptjs';
 import { AuditService } from '../audit/audit.service';
 import { PrismaService } from '../prisma.service';
@@ -15,6 +15,7 @@ const publicAccountSelect = {
   createdAt: true,
   updatedAt: true,
   projectManager: { select: { id: true, displayName: true, department: true, status: true } },
+  permissions: { select: { resource: true, level: true }, orderBy: { resource: 'asc' } },
 } satisfies Prisma.UserSelect;
 
 @Injectable()
@@ -51,6 +52,7 @@ export class AccountsService {
     const displayName = dto.displayName.trim();
     this.validateRequired(username, displayName);
     const projectManagerId = await this.resolveProjectManagerId(dto.role, dto.projectManagerId);
+    const permissions = this.normalizePermissions(dto.role, dto.permissions ?? []);
     await this.ensureUsernameAvailable(username);
 
     try {
@@ -62,6 +64,7 @@ export class AccountsService {
           role: dto.role,
           projectManagerId,
           status: 'ACTIVE',
+          permissions: { create: permissions },
         },
         select: publicAccountSelect,
       });
@@ -94,13 +97,17 @@ export class AccountsService {
     const role = dto.role ?? before.role;
     const requestedPmId = dto.projectManagerId !== undefined ? dto.projectManagerId : before.projectManagerId;
     const projectManagerId = await this.resolveProjectManagerId(role, requestedPmId, id);
+    const deactivating = dto.status === 'INACTIVE';
+    const permissions = this.normalizePermissions(role, dto.permissions ?? before.permissions);
     const data: Prisma.UserUpdateInput = {
       ...(username ? { username } : {}),
       ...(displayName ? { displayName } : {}),
       ...(dto.password ? { passwordHash: await hash(dto.password, 12) } : {}),
       role,
       status: dto.status ?? before.status,
-      projectManager: projectManagerId ? { connect: { id: projectManagerId } } : { disconnect: true },
+      // A disabled account must not reserve its PM for a future account.
+      projectManager: deactivating ? { disconnect: true } : projectManagerId ? { connect: { id: projectManagerId } } : { disconnect: true },
+      permissions: { deleteMany: {}, create: permissions },
     };
 
     try {
@@ -125,7 +132,8 @@ export class AccountsService {
     const before = await this.findAccount(id);
     const account = await this.prisma.user.update({
       where: { id },
-      data: { status: 'INACTIVE' },
+      // Release the one-to-one PM binding when the account is disabled.
+      data: { status: 'INACTIVE', projectManager: { disconnect: true } },
       select: publicAccountSelect,
     });
     await this.audit.record({
@@ -145,8 +153,11 @@ export class AccountsService {
   }
 
   private async resolveProjectManagerId(role: UserRole, projectManagerId?: string | null, excludeAccountId?: string) {
-    if (role === 'GUEST') return null;
-    if (!projectManagerId) return null;
+    if (role !== 'PM') return null;
+    if (!projectManagerId) {
+      if (role === 'PM') throw new BadRequestException('PM 账号必须绑定 PM');
+      return null;
+    }
     const projectManager = await this.prisma.projectManager.findFirst({
       where: { id: projectManagerId, status: 'ACTIVE' },
       select: { id: true },
@@ -160,6 +171,28 @@ export class AccountsService {
     return projectManagerId;
   }
 
+  private normalizePermissions(
+    role: UserRole,
+    permissions: { resource: PermissionResource; level: PermissionLevel }[],
+  ) {
+    if (role !== 'ADMIN' && role !== 'PM') return [];
+    const allowedResources = role === 'PM'
+      ? new Set<PermissionResource>(['SUPPORTERS', 'EXECUTORS', 'EXPERTS', 'MEMBERS'])
+      : null;
+    const seen = new Set<PermissionResource>();
+    return permissions.map((permission) => {
+      if (allowedResources && !allowedResources.has(permission.resource)) {
+        throw new BadRequestException('PM 仅需设置四个资料库的权限');
+      }
+      if (seen.has(permission.resource)) throw new BadRequestException('同一模块不能重复设置权限');
+      if (permission.level === 'REVIEW' && !['PROJECTS', 'EXPERTS'].includes(permission.resource)) {
+        throw new BadRequestException('只有项目台账和专家库可以设置复核权限');
+      }
+      seen.add(permission.resource);
+      return { resource: permission.resource, level: permission.level };
+    });
+  }
+
   private async ensureUsernameAvailable(username: string, excludeId?: string) {
     const existing = await this.prisma.user.findFirst({
       where: { username: { equals: username, mode: 'insensitive' }, ...(excludeId ? { id: { not: excludeId } } : {}) },
@@ -169,7 +202,7 @@ export class AccountsService {
   }
 
   private async findAccount(id: string) {
-    const account = await this.prisma.user.findUnique({ where: { id } });
+    const account = await this.prisma.user.findUnique({ where: { id }, include: { permissions: true } });
     if (!account) throw new NotFoundException('账号不存在');
     return account;
   }

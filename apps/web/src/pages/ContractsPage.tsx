@@ -5,6 +5,7 @@ import { DataTable, type TableColumn } from '../components/DataTable';
 import { ConfirmActionModal } from '../components/ConfirmActionModal';
 import { DateInput, Field, FormActions, Input, MoneyInput, SearchableSelect, Select } from '../components/FormControls';
 import { LedgerAttachmentList, PdfAttachmentInput, uploadLedgerAttachments } from '../components/LedgerAttachments';
+import { LedgerExportButton } from '../components/LedgerExportButton';
 import { Modal } from '../components/Modal';
 import { PageHeader } from '../components/PageHeader';
 import { DEFAULT_PAGE_SIZE, Pagination } from '../components/Pagination';
@@ -13,13 +14,14 @@ import { ErrorState, LoadingState } from '../components/States';
 import { StatusChip } from '../components/StatusChip';
 import { api, queryString } from '../lib/api';
 import { useAuth } from '../lib/auth';
+import { hasPermission } from '../lib/permissions';
 import { formObject } from '../lib/form';
 import { formatDate, formatMoney } from '../lib/format';
 import type { Contract, ListResponse, Organization, Project } from '../lib/types';
 
 export function ContractsPage() {
   const { user } = useAuth();
-  const canEdit = user?.role === 'SYSTEM_ADMIN' || user?.role === 'ADMIN';
+  const canEdit = hasPermission(user, 'CONTRACTS', 'EDIT');
   const [q, setQ] = useState('');
   const [page, setPage] = useState(1);
   const [modal, setModal] = useState(false);
@@ -62,7 +64,7 @@ export function ContractsPage() {
   if (canEdit) columns.push({ key: 'action', label: '', render: (row) => <span className="row-actions"><button className="table-action" disabled={row.status === 'VOID' || row.status === 'TERMINATED'} onClick={() => { setContractType(row.contractType as 'SUPPORT' | 'EXECUTION'); setAttachmentFiles([]); setNotice(''); setEditing(row); }}><Pencil size={14} />编辑</button>{row.status !== 'VOID' && <button className="table-action danger" onClick={() => setVoiding(row)}><Trash2 size={14} />作废</button>}</span> });
   function submit(event: FormEvent<HTMLFormElement>) { event.preventDefault(); save.mutate({ body: formObject(event.currentTarget), files: attachmentFiles }); }
   return <div className="page-enter">
-    <PageHeader eyebrow="业务台账 / 合同" title="合同台账" description="支持协议计入项目应收，执行协议计入项目应付执行款。" action={canEdit ? <button className="button primary" onClick={() => { setContractType('SUPPORT'); setAttachmentFiles([]); setNotice(''); setModal(true); }}><Plus size={17} />登记合同</button> : undefined} />
+    <PageHeader eyebrow="业务台账 / 合同" title="合同台账" description="支持协议计入项目应收，执行协议计入项目应付执行款。" action={(user?.role === 'SYSTEM_ADMIN' || canEdit) ? <div className="button-group">{user?.role === 'SYSTEM_ADMIN' && <LedgerExportButton dataset="contracts" fileName="合同台账" filters={{ q }} />}{canEdit && <button className="button primary" onClick={() => { setContractType('SUPPORT'); setAttachmentFiles([]); setNotice(''); setModal(true); }}><Plus size={17} />登记合同</button>}</div> : undefined} />
     {notice && <div className="operation-banner">{notice}</div>}
     <div className="toolbar"><SearchBar value={q} onChange={(value) => { setQ(value); setPage(1); }} placeholder="搜索项目、合同主体或签约方" /><span className="result-count">{contracts.data?.total ?? 0} 份合同</span></div>
     <section className="panel table-panel">{contracts.isLoading ? <LoadingState /> : contracts.error ? <ErrorState error={contracts.error} /> : <><DataTable columns={columns} rows={contracts.data?.items ?? []} rowKey={(row) => row.id} /><Pagination page={page} total={contracts.data?.total ?? 0} onPageChange={setPage} /></>}</section>

@@ -1,0 +1,3 @@
+ALTER TABLE "attachments"
+  ADD COLUMN "storage_provider" VARCHAR(10) NOT NULL DEFAULT 'LOCAL',
+  ALTER COLUMN "sha256" DROP NOT NULL;

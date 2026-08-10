@@ -4,7 +4,9 @@ import { type FormEvent, useState } from 'react';
 import { DataTable, type TableColumn } from '../components/DataTable';
 import { ConfirmActionModal } from '../components/ConfirmActionModal';
 import { DateInput, Field, FormActions, Input, MoneyInput, SearchableSelect, Select } from '../components/FormControls';
+import { LedgerAttachmentList, PdfAttachmentInput, uploadLedgerAttachments } from '../components/LedgerAttachments';
 import { Modal } from '../components/Modal';
+import { LedgerExportButton } from '../components/LedgerExportButton';
 import { PageHeader } from '../components/PageHeader';
 import { DEFAULT_PAGE_SIZE, Pagination } from '../components/Pagination';
 import { SearchBar } from '../components/SearchBar';
@@ -12,18 +14,21 @@ import { ErrorState, LoadingState } from '../components/States';
 import { StatusChip } from '../components/StatusChip';
 import { api, queryString } from '../lib/api';
 import { useAuth } from '../lib/auth';
+import { hasPermission } from '../lib/permissions';
 import { formObject } from '../lib/form';
 import { formatDate, formatMoney } from '../lib/format';
 import type { Committee, ListResponse, MemberDue, Membership, ProjectManager } from '../lib/types';
 
 export function MembersPage() {
   const { user } = useAuth();
-  const canEdit = user?.role === 'SYSTEM_ADMIN' || user?.role === 'ADMIN';
+  const canEdit = hasPermission(user, 'MEMBERS', 'EDIT');
   const [q, setQ] = useState(''); const [memberModal, setMemberModal] = useState(false); const [committeeModal, setCommitteeModal] = useState(false); const [dueMember, setDueMember] = useState<Membership | null>(null);
   const [page, setPage] = useState(1);
   const [committeeQ, setCommitteeQ] = useState('');
   const [committeePage, setCommitteePage] = useState(1);
   const [editingMember, setEditingMember] = useState<Membership | null>(null);
+  const [memberAttachmentFiles, setMemberAttachmentFiles] = useState<File[]>([]);
+  const [memberNotice, setMemberNotice] = useState('');
   const [deactivatingMember, setDeactivatingMember] = useState<Membership | null>(null);
   const [editingCommittee, setEditingCommittee] = useState<Committee | null>(null);
   const [deactivatingCommittee, setDeactivatingCommittee] = useState<Committee | null>(null);
@@ -42,7 +47,19 @@ export function MembersPage() {
     enabled: Boolean(viewingDues),
   });
   const refresh = () => { void queryClient.invalidateQueries({ queryKey: ['memberships'] }); void queryClient.invalidateQueries({ queryKey: ['committees'] }); void queryClient.invalidateQueries({ queryKey: ['committee-options'] }); void queryClient.invalidateQueries({ queryKey: ['member-dues'] }); };
-  const saveMember = useMutation({ mutationFn: (body: Record<string, string>) => editingMember ? api.patch(`/memberships/${editingMember.id}`, body) : api.post('/memberships', body), onSuccess: () => { refresh(); setMemberModal(false); setEditingMember(null); } });
+  const saveMember = useMutation({
+    mutationFn: async ({ body, files }: { body: Record<string, string>; files: File[] }) => {
+      const membership = editingMember
+        ? await api.patch<Membership>(`/memberships/${editingMember.id}`, body)
+        : await api.post<Membership>('/memberships', body);
+      return { failedUploads: await uploadLedgerAttachments('MEMBERSHIP', membership.id, files) };
+    },
+    onSuccess: ({ failedUploads }) => {
+      refresh();
+      setMemberNotice(failedUploads ? `会员已保存，但有 ${failedUploads} 个附件上传失败，请编辑会员后重试。` : '');
+      setMemberModal(false); setEditingMember(null); setMemberAttachmentFiles([]);
+    },
+  });
   const deactivateMember = useMutation({ mutationFn: (id: string) => api.delete(`/memberships/${id}`), onSuccess: () => { refresh(); setDeactivatingMember(null); } });
   const saveCommittee = useMutation({ mutationFn: (body: Record<string, string>) => editingCommittee ? api.patch(`/memberships/committees/${editingCommittee.id}`, body) : api.post('/memberships/committees', body), onSuccess: () => { refresh(); setCommitteeModal(false); setEditingCommittee(null); } });
   const deactivateCommittee = useMutation({ mutationFn: (id: string) => api.delete(`/memberships/committees/${id}`), onSuccess: () => { refresh(); setDeactivatingCommittee(null); } });
@@ -50,22 +67,26 @@ export function MembersPage() {
   const waiveDue = useMutation({ mutationFn: (id: string) => api.delete(`/memberships/dues/${id}`), onSuccess: () => { refresh(); setWaivingDue(null); } });
   const columns: TableColumn<Membership>[] = [
     { key: 'name', label: '会员名称', render: (row) => <span className="primary-cell"><strong>{row.memberName}</strong><small>{row.memberType}</small></span> },
+    { key: 'position', label: '会员职务', render: (row) => row.memberPosition ?? '—' },
     { key: 'committee', label: '所属专委会', render: (row) => <span>{row.committee.name}<small className="block-muted mono">{row.committee.committeeCode}</small></span> },
     { key: 'pm', label: 'PM', render: (row) => row.pm.displayName },
     { key: 'joined', label: '入会日期', render: (row) => formatDate(row.joinedOn) },
+    { key: 'certificate', label: '会员证书', render: (row) => row.certificateIssued ? '已发放' : '未发放' },
     { key: 'due', label: '最近会费', render: (row) => row.dues[0] ? <span>{row.dues[0].periodLabel ?? row.dues[0].dueCode}<small className="block-muted">应收 {formatMoney(row.dues[0].amountDue)} · 实收 {formatMoney(row.dues[0].amountPaid)}</small><button type="button" className="due-history-link" onClick={() => { setDueHistoryPage(1); setViewingDues(row); }}>查看全部 {row._count?.dues ?? row.dues.length} 笔</button></span> : <span className="muted">尚未生成</span> },
     { key: 'status', label: '状态', render: (row) => <span className="row-actions"><StatusChip value={row.status} />{row.dues[0] && <StatusChip value={row.dues[0].status} />}</span> },
+    { key: 'attachments', label: '附件列表', render: (row) => <LedgerAttachmentList objectType="MEMBERSHIP" objectId={row.id} attachments={row.attachments ?? []} /> },
     { key: 'action', label: '', render: (row) => {
       return <span className="row-actions">
         {canEdit && <button className="table-action" onClick={() => { setDueMember(row); setEditingDue(null); }}><Plus size={15} />会费</button>}
         {(row._count?.dues ?? row.dues.length) > 0 && <button className="table-action" onClick={() => { setDueHistoryPage(1); setViewingDues(row); }}><ReceiptText size={14} />记录</button>}
-        {canEdit && <button className="table-action" onClick={() => setEditingMember(row)}><Pencil size={14} />会员</button>}
+        {canEdit && <button className="table-action" onClick={() => { setMemberAttachmentFiles([]); setMemberNotice(''); setEditingMember(row); }}><Pencil size={14} />会员</button>}
         {canEdit && row.status === 'ACTIVE' && <button className="table-action danger" onClick={() => setDeactivatingMember(row)}><Trash2 size={14} />停用</button>}
       </span>;
     } },
   ];
   return <div className="page-enter">
-    <PageHeader eyebrow="基础资料 / 会员" title="会员库" description="会员按专委会归档，会费通过银行流水确认后自动更新实收状态。" action={canEdit ? <div className="button-group"><button className="button secondary" onClick={() => { setCommitteeModal(true); setEditingCommittee(null); }}><Landmark size={16} />成立专委会</button><button className="button primary" onClick={() => { setMemberModal(true); setEditingMember(null); }}><Plus size={17} />新增会员</button></div> : undefined} />
+    <PageHeader eyebrow="基础资料 / 会员" title="会员库" description="会员按专委会归档，会费通过银行流水确认后自动更新实收状态。" action={(user?.role === 'SYSTEM_ADMIN' || canEdit) ? <div className="button-group">{user?.role === 'SYSTEM_ADMIN' && <LedgerExportButton dataset="members" fileName="会员库" filters={{ q }} />}{canEdit && <button className="button secondary" onClick={() => { setCommitteeModal(true); setEditingCommittee(null); }}><Landmark size={16} />成立专委会</button>}{canEdit && <button className="button primary" onClick={() => { setMemberAttachmentFiles([]); setMemberNotice(''); setMemberModal(true); setEditingMember(null); }}><Plus size={17} />新增会员</button>}</div> : undefined} />
+    {memberNotice && <div className="operation-banner">{memberNotice}</div>}
     <section className="committee-directory">
       <div className="committee-directory-head"><span><small>专委会目录</small><strong>{committees.data?.total ?? 0} 个启用专委会</strong></span><SearchBar value={committeeQ} onChange={(value) => { setCommitteeQ(value); setCommitteePage(1); }} placeholder="搜索专委会名称或编码" /></div>
       {committees.isLoading ? <LoadingState /> : committees.error ? <ErrorState error={committees.error} /> : <><div className="committee-strip">{committees.data?.items.map((item) => <span key={item.id}><small>{item.committeeCode}</small><strong>{item.name}</strong><b>{item._count?.memberships ?? 0} 位会员</b>{canEdit && <i className="committee-actions"><button type="button" onClick={() => setEditingCommittee(item)}>编辑</button><button type="button" onClick={() => setDeactivatingCommittee(item)}>停用</button></i>}</span>)}</div>{committees.data?.items.length === 0 && <p className="committee-empty">没有找到符合条件的专委会</p>}<Pagination compact page={committeePage} pageSize={4} total={committees.data?.total ?? 0} onPageChange={setCommitteePage} /></>}
@@ -73,14 +94,16 @@ export function MembersPage() {
     <div className="toolbar"><SearchBar value={q} onChange={(value) => { setQ(value); setPage(1); }} placeholder="搜索会员或所属专委会" /><span className="result-count">{members.data?.total ?? 0} 位会员</span></div>
     <section className="panel table-panel">{members.isLoading ? <LoadingState /> : members.error ? <ErrorState error={members.error} /> : <><DataTable columns={columns} rows={members.data?.items ?? []} rowKey={(row) => row.id} /><Pagination page={page} total={members.data?.total ?? 0} onPageChange={setPage} /></>}</section>
 
-    <Modal open={memberModal || Boolean(editingMember)} onClose={() => { setMemberModal(false); setEditingMember(null); }} title={editingMember ? '编辑会员' : '新增会员'}>
-      <form key={editingMember?.id ?? 'new'} className="form-grid" onSubmit={(event: FormEvent<HTMLFormElement>) => { event.preventDefault(); const body = formObject(event.currentTarget); if (!body.joinedOn) delete body.joinedOn; saveMember.mutate(body); }}>
+    <Modal open={memberModal || Boolean(editingMember)} onClose={() => { setMemberModal(false); setEditingMember(null); setMemberAttachmentFiles([]); }} title={editingMember ? '编辑会员' : '新增会员'} size="large">
+      <form key={editingMember?.id ?? 'new'} className="form-grid" onSubmit={(event: FormEvent<HTMLFormElement>) => { event.preventDefault(); const body = formObject(event.currentTarget); if (!body.joinedOn) delete body.joinedOn; saveMember.mutate({ body, files: memberAttachmentFiles }); }}>
         <Field label="会员名称" span={2}><Input name="memberName" required defaultValue={editingMember?.memberName ?? ''} /></Field>
         <Field label="所属专委会" span={2}><SearchableSelect name="committeeId" ariaLabel="所属专委会" required defaultValue={editingMember?.committeeId ?? editingMember?.committee.id ?? ''} disabled={committeeOptions.isLoading || committeeOptions.isError} placeholder="请选择专委会" searchPlaceholder="搜索专委会名称或编码" options={(committeeOptions.data ?? []).map((item) => ({ value: item.id, label: `${item.committeeCode} · ${item.name}` }))} /></Field>
-        <Field label="会员类别"><Input name="memberType" required defaultValue={editingMember?.memberType ?? ''} /></Field><Field label="负责 PM"><SearchableSelect name="pmUserId" ariaLabel="负责 PM" required defaultValue={editingMember?.pmUserId ?? editingMember?.pm.id ?? ''} disabled={users.isLoading || users.isError} placeholder="请选择 PM" searchPlaceholder="搜索 PM 姓名" options={(users.data ?? []).map((user) => ({ value: user.id, label: user.displayName, searchText: user.department }))} /></Field>
-        <Field label="入会日期"><DateInput name="joinedOn" aria-label="入会日期" defaultValue={editingMember?.joinedOn?.slice(0, 10) ?? ''} /></Field>
+        <Field label="会员类别"><Input name="memberType" required defaultValue={editingMember?.memberType ?? ''} /></Field><Field label="会员职务"><Input name="memberPosition" required defaultValue={editingMember?.memberPosition ?? ''} /></Field>
+        <Field label="负责 PM"><SearchableSelect name="pmUserId" ariaLabel="负责 PM" required defaultValue={editingMember?.pmUserId ?? editingMember?.pm.id ?? ''} disabled={users.isLoading || users.isError} placeholder="请选择 PM" searchPlaceholder="搜索 PM 姓名" options={(users.data ?? []).map((user) => ({ value: user.id, label: user.displayName, searchText: user.department }))} /></Field><Field label="入会日期"><DateInput name="joinedOn" aria-label="入会日期" defaultValue={editingMember?.joinedOn?.slice(0, 10) ?? ''} /></Field>
+        <Field label="是否发放会员证书" span={editingMember ? 1 : 2}><Select name="certificateIssued" defaultValue={editingMember?.certificateIssued ? 'true' : 'false'}><option value="false">否</option><option value="true">是</option></Select></Field>
         {editingMember && <Field label="会员状态"><Select name="status" defaultValue={editingMember.status}><option value="ACTIVE">启用</option><option value="INACTIVE">停用</option></Select></Field>}
-        {saveMember.error && <p className="form-error span-2">{saveMember.error.message}</p>}<div className="span-2"><FormActions pending={saveMember.isPending} onCancel={() => { setMemberModal(false); setEditingMember(null); }} submitLabel="保存" /></div>
+        <Field label="附件列表" span={2} hint="可选；仅支持 PDF，每次添加一份，最多 10 份；单个文件不超过 10MB。"><PdfAttachmentInput files={memberAttachmentFiles} onFilesChange={setMemberAttachmentFiles} existingCount={editingMember?.attachments?.length ?? 0} />{editingMember && <LedgerAttachmentList objectType="MEMBERSHIP" objectId={editingMember.id} attachments={editingMember.attachments ?? []} canDelete onDeleted={(attachmentId) => { setEditingMember((current) => current ? { ...current, attachments: current.attachments?.filter((item) => item.id !== attachmentId) } : current); void queryClient.invalidateQueries({ queryKey: ['memberships'] }); }} />}</Field>
+        {saveMember.error && <p className="form-error span-2">{saveMember.error.message}</p>}<div className="span-2"><FormActions pending={saveMember.isPending} onCancel={() => { setMemberModal(false); setEditingMember(null); setMemberAttachmentFiles([]); }} submitLabel="保存" /></div>
       </form>
     </Modal>
     <Modal open={committeeModal || Boolean(editingCommittee)} onClose={() => { setCommitteeModal(false); setEditingCommittee(null); }} title={editingCommittee ? '编辑专委会' : '成立专委会'}>

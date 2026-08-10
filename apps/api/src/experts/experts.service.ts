@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
 import { SensitiveDataService } from '../common/sensitive-data.service';
 import { PrismaService } from '../prisma.service';
+import type { AuthUser } from '../common/current-user.decorator';
 import { CreateExpertDto, ExpertListQueryDto, ReviewExpertDto, UpdateExpertDto } from './experts.dto';
 
 @Injectable()
@@ -13,10 +14,11 @@ export class ExpertsService {
     private readonly audit: AuditService,
   ) {}
 
-  async list(query: ExpertListQueryDto) {
+  async list(query: ExpertListQueryDto, user?: AuthUser) {
     const where: Prisma.ExpertProfileWhereInput = {
       ...(query.reviewStatus ? { reviewStatus: query.reviewStatus } : {}),
       ...(query.status ? { status: query.status } : {}),
+      ...(user?.role === 'PM' ? { formOwnerId: user.projectManagerId ?? '__unbound_pm__' } : {}),
       ...(query.q ? { person: { OR: [
         { name: { contains: query.q, mode: 'insensitive' } },
         { organizationName: { contains: query.q, mode: 'insensitive' } },
@@ -61,17 +63,17 @@ export class ExpertsService {
     };
   }
 
-  options() {
+  options(user?: AuthUser) {
     return this.prisma.expertProfile.findMany({
-      where: { reviewStatus: 'APPROVED', status: 'ACTIVE' },
+      where: { reviewStatus: 'APPROVED', status: 'ACTIVE', ...(user?.role === 'PM' ? { formOwnerId: user.projectManagerId ?? '__unbound_pm__' } : {}) },
       select: { id: true, person: { select: { name: true, organizationName: true } } },
       orderBy: { person: { name: 'asc' } },
     });
   }
 
-  async paymentDetails(id: string, actorUserId: string) {
+  async paymentDetails(id: string, actorUserId: string, user?: AuthUser) {
     const expert = await this.prisma.expertProfile.findFirst({
-      where: { id, reviewStatus: 'APPROVED', status: 'ACTIVE' },
+      where: { id, reviewStatus: 'APPROVED', status: 'ACTIVE', ...(user?.role === 'PM' ? { formOwnerId: user.projectManagerId ?? '__unbound_pm__' } : {}) },
       select: { id: true, bankName: true, bankAccountEncrypted: true, person: { select: { name: true } } },
     });
     if (!expert) throw new NotFoundException('专家不存在或已停用');
@@ -88,8 +90,10 @@ export class ExpertsService {
     return { name: expert.person.name, bankName: expert.bankName ?? '', bankAccount: bankAccount ?? '' };
   }
 
-  async create(dto: CreateExpertDto, actorUserId: string) {
-    await this.requireActivePm(dto.formOwnerId);
+  async create(dto: CreateExpertDto, actorUserId: string, user?: AuthUser) {
+    const formOwnerId = user?.role === 'PM' ? user.projectManagerId : dto.formOwnerId;
+    if (!formOwnerId) throw new NotFoundException('PM 账号必须绑定 PM');
+    await this.requireActivePm(formOwnerId);
     const idNumberHash = this.sensitive.hash(dto.idNumber);
     if (idNumberHash && await this.prisma.person.findUnique({ where: { idNumberHash } })) {
       throw new ConflictException('该证件号码对应的专家已存在');
@@ -115,7 +119,7 @@ export class ExpertsService {
         bankAccountEncrypted: this.sensitive.encrypt(dto.bankAccount),
         bankAccountMasked: this.sensitive.maskBank(dto.bankAccount),
         joinedOn: dto.joinedOn ? new Date(dto.joinedOn) : new Date(),
-        formOwner: { connect: { id: dto.formOwnerId } },
+        formOwner: { connect: { id: formOwnerId } },
       },
       include: { person: true, formOwner: { select: { displayName: true } } },
     });
@@ -126,8 +130,10 @@ export class ExpertsService {
     return expert;
   }
 
-  async update(id: string, dto: UpdateExpertDto, actorUserId: string) {
-    const before = await this.prisma.expertProfile.findUnique({ where: { id }, include: { person: true } });
+  async update(id: string, dto: UpdateExpertDto, actorUserId: string, user?: AuthUser) {
+    const before = user?.role === 'PM'
+      ? await this.prisma.expertProfile.findFirst({ where: { id, formOwnerId: user.projectManagerId ?? '__unbound_pm__' }, include: { person: true } })
+      : await this.prisma.expertProfile.findUnique({ where: { id }, include: { person: true } });
     if (!before) throw new NotFoundException('专家不存在');
     if (before.status === 'INACTIVE') throw new BadRequestException('已停用专家不能编辑');
     if (dto.formOwnerId) await this.requireActivePm(dto.formOwnerId);
@@ -143,7 +149,7 @@ export class ExpertsService {
         ...(dto.bankName !== undefined ? { bankName: dto.bankName || null } : {}),
         ...(dto.bankAccount ? { bankAccountEncrypted: this.sensitive.encrypt(dto.bankAccount), bankAccountMasked: this.sensitive.maskBank(dto.bankAccount) } : {}),
         ...(dto.joinedOn ? { joinedOn: new Date(dto.joinedOn) } : {}),
-        ...(dto.formOwnerId ? { formOwner: { connect: { id: dto.formOwnerId } } } : {}),
+        ...(user?.role === 'PM' ? { formOwner: { connect: { id: user.projectManagerId! } } } : dto.formOwnerId ? { formOwner: { connect: { id: dto.formOwnerId } } } : {}),
         person: { update: {
           ...(dto.name !== undefined ? { name: dto.name } : {}),
           ...(dto.phone ? { phoneEncrypted: this.sensitive.encrypt(dto.phone), phoneMasked: this.sensitive.maskPhone(dto.phone) } : {}),
@@ -163,14 +169,14 @@ export class ExpertsService {
     return expert;
   }
 
-  async sensitiveDetails(id: string, actorUserId: string) {
-    const expert = await this.prisma.expertProfile.findUnique({
-      where: { id },
-      select: {
+  async sensitiveDetails(id: string, actorUserId: string, user?: AuthUser) {
+    const selection = {
         id: true, status: true, bankAccountEncrypted: true,
         person: { select: { name: true, phoneEncrypted: true, idNumberEncrypted: true } },
-      },
-    });
+    } satisfies Prisma.ExpertProfileSelect;
+    const expert = user?.role === 'PM'
+      ? await this.prisma.expertProfile.findFirst({ where: { id, formOwnerId: user.projectManagerId ?? '__unbound_pm__' }, select: selection })
+      : await this.prisma.expertProfile.findUnique({ where: { id }, select: selection });
     if (!expert) throw new NotFoundException('专家不存在');
     if (expert.status === 'INACTIVE') throw new BadRequestException('已停用专家不能查看敏感信息');
     const unavailableFields: string[] = [];
@@ -199,8 +205,10 @@ export class ExpertsService {
     return details;
   }
 
-  async deactivate(id: string, actorUserId: string) {
-    const before = await this.prisma.expertProfile.findUnique({ where: { id } });
+  async deactivate(id: string, actorUserId: string, user?: AuthUser) {
+    const before = user?.role === 'PM'
+      ? await this.prisma.expertProfile.findFirst({ where: { id, formOwnerId: user.projectManagerId ?? '__unbound_pm__' } })
+      : await this.prisma.expertProfile.findUnique({ where: { id } });
     if (!before) throw new NotFoundException('专家不存在');
     if (before.status === 'INACTIVE') throw new BadRequestException('专家已停用，不能重复操作');
     if (before.reviewStatus !== 'APPROVED') throw new BadRequestException('只有已通过专家可以停用');
@@ -209,8 +217,10 @@ export class ExpertsService {
     return expert;
   }
 
-  async review(id: string, dto: ReviewExpertDto, actorUserId: string) {
-    const before = await this.prisma.expertProfile.findUnique({ where: { id } });
+  async review(id: string, dto: ReviewExpertDto, actorUserId: string, user?: AuthUser) {
+    const before = user?.role === 'PM'
+      ? await this.prisma.expertProfile.findFirst({ where: { id, formOwnerId: user.projectManagerId ?? '__unbound_pm__' } })
+      : await this.prisma.expertProfile.findUnique({ where: { id } });
     if (!before) throw new NotFoundException('专家不存在');
     if (before.status === 'INACTIVE') throw new BadRequestException('已停用专家不能复核');
     if (before.reviewStatus !== 'PENDING') throw new BadRequestException('只有待复核专家可以通过或驳回');
@@ -229,6 +239,12 @@ export class ExpertsService {
       afterData: { reviewStatus: expert.reviewStatus, status: expert.status },
     });
     return expert;
+  }
+
+  async assertScope(id: string, user: AuthUser) {
+    if (user.role !== 'PM') return;
+    const expert = await this.prisma.expertProfile.findFirst({ where: { id, formOwnerId: user.projectManagerId ?? '__unbound_pm__' }, select: { id: true } });
+    if (!expert) throw new NotFoundException('专家不存在或不属于当前 PM');
   }
 
   private async requireActivePm(id: string) {

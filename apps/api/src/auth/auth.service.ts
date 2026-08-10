@@ -12,7 +12,10 @@ export class AuthService {
   ) {}
 
   async login(dto: LoginDto) {
-    const user = await this.prisma.user.findUnique({ where: { username: dto.username } });
+    const user = await this.prisma.user.findUnique({
+      where: { username: dto.username },
+      include: { permissions: { select: { resource: true, level: true } } },
+    });
     if (!user || user.status !== 'ACTIVE' || !(await compare(dto.password, user.passwordHash))) {
       throw new UnauthorizedException('用户名或密码不正确');
     }
@@ -31,6 +34,7 @@ export class AuthService {
         displayName: user.displayName,
         role: user.role,
         projectManagerId: user.projectManagerId,
+        permissions: user.permissions,
       },
     };
   }

@@ -10,7 +10,25 @@ datasource db {
 enum UserRole {
   SYSTEM_ADMIN
   ADMIN
+  PM
   GUEST
+}
+
+enum PermissionResource {
+  PROJECTS
+  CONTRACTS
+  BANKING
+  INVOICES
+  SUPPORTERS
+  EXECUTORS
+  EXPERTS
+  MEMBERS
+}
+
+enum PermissionLevel {
+  VIEW
+  EDIT
+  REVIEW
 }
 
 enum RecordStatus {
@@ -19,10 +37,20 @@ enum RecordStatus {
 }
 
 enum ProjectStatus {
-  DRAFT
   ACTIVE
   CLOSED
-  CANCELLED
+  ABORTED
+}
+
+enum ArchiveStatus {
+  UNARCHIVED
+  ARCHIVED
+}
+
+enum ProjectReviewState {
+  PENDING
+  APPROVED
+  REJECTED
 }
 
 enum OrganizationRoleType {
@@ -103,6 +131,11 @@ enum InvoiceStatus {
   VOID
 }
 
+enum InvoiceDirection {
+  ISSUED
+  RECEIVED
+}
+
 enum DueStatus {
   UNPAID
   PARTIAL
@@ -122,9 +155,28 @@ model User {
   updatedAt        DateTime     @updatedAt @map("updated_at")
 
   projectManager ProjectManager? @relation(fields: [projectManagerId], references: [id], onDelete: SetNull)
+  permissions    UserPermission[]
   expertReviews ExpertProfile[] @relation("ExpertReviewer")
+  requestedProjectStatuses Project[] @relation("ProjectStatusRequester")
+  reviewedProjectStatuses  Project[] @relation("ProjectStatusReviewer")
+  requestedProjectArchives Project[] @relation("ProjectArchiveRequester")
+  reviewedProjectArchives  Project[] @relation("ProjectArchiveReviewer")
 
   @@map("users")
+}
+
+model UserPermission {
+  userId    String             @map("user_id") @db.Uuid
+  resource  PermissionResource
+  level     PermissionLevel
+  createdAt DateTime           @default(now()) @map("created_at")
+  updatedAt DateTime           @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, resource])
+  @@index([resource, level])
+  @@map("user_permissions")
 }
 
 model ProjectManager {
@@ -150,35 +202,58 @@ model Project {
   id              String        @id @default(uuid()) @db.Uuid
   projectCode     String        @unique @map("project_code") @db.VarChar(32)
   platform        String        @db.VarChar(100)
+  platformAbbreviation String?  @map("platform_abbreviation") @db.VarChar(10)
   publishedOn     DateTime      @map("published_on") @db.Date
   name            String        @db.VarChar(200)
   nature          String        @db.VarChar(50)
+  projectType     String        @map("project_type") @db.VarChar(50)
   periodMonths    Int           @map("period_months")
   approvedAmount  Decimal       @map("approved_amount") @db.Decimal(18, 2)
   executionCost   Decimal       @map("execution_cost") @db.Decimal(18, 2)
   pmName          String        @map("pm_name") @db.VarChar(100)
   pmUserId        String?       @map("pm_user_id") @db.Uuid
   status          ProjectStatus @default(ACTIVE)
+  archiveStatus   ArchiveStatus @default(UNARCHIVED) @map("archive_status")
+  requestedStatus ProjectStatus? @map("requested_status")
+  statusReviewState ProjectReviewState? @map("status_review_state")
+  statusRequestedById String? @map("status_requested_by_id") @db.Uuid
+  statusRequestedAt DateTime? @map("status_requested_at")
+  statusReviewerId String? @map("status_reviewer_id") @db.Uuid
+  statusReviewedAt DateTime? @map("status_reviewed_at")
+  requestedArchiveStatus ArchiveStatus? @map("requested_archive_status")
+  archiveReviewState ProjectReviewState? @map("archive_review_state")
+  archiveRequestedById String? @map("archive_requested_by_id") @db.Uuid
+  archiveRequestedAt DateTime? @map("archive_requested_at")
+  archiveReviewerId String? @map("archive_reviewer_id") @db.Uuid
+  archiveReviewedAt DateTime? @map("archive_reviewed_at")
   remark          String?
   version         Int           @default(1)
   createdAt       DateTime      @default(now()) @map("created_at")
   updatedAt       DateTime      @updatedAt @map("updated_at")
 
   pm         ProjectManager?            @relation("ProjectManager", fields: [pmUserId], references: [id])
+  statusRequester User? @relation("ProjectStatusRequester", fields: [statusRequestedById], references: [id], onDelete: SetNull)
+  statusReviewer User? @relation("ProjectStatusReviewer", fields: [statusReviewerId], references: [id], onDelete: SetNull)
+  archiveRequester User? @relation("ProjectArchiveRequester", fields: [archiveRequestedById], references: [id], onDelete: SetNull)
+  archiveReviewer User? @relation("ProjectArchiveReviewer", fields: [archiveReviewerId], references: [id], onDelete: SetNull)
   contracts  Contract[]
   allocations BankAllocation[]
   invoices   Invoice[]
   candidates ProjectExecutorCandidate[]
 
   @@index([pmUserId, status])
+  @@index([statusReviewState, archiveReviewState])
   @@map("projects")
 }
 
 model ProjectCodeCounter {
-  year       Int      @id
+  platformAbbreviation String   @map("platform_abbreviation") @db.VarChar(10)
+  year       Int
+  month      Int
   nextNumber Int      @map("next_number")
   updatedAt  DateTime @updatedAt @map("updated_at")
 
+  @@id([platformAbbreviation, year, month])
   @@map("project_code_counters")
 }
 
@@ -186,8 +261,9 @@ model Organization {
   id               String       @id @default(uuid()) @db.Uuid
   organizationCode String       @unique @map("organization_code") @db.VarChar(32)
   name             String       @db.VarChar(200)
-  normalizedName   String       @unique @map("normalized_name") @db.VarChar(200)
+  normalizedName   String       @map("normalized_name") @db.VarChar(200)
   platform         String       @db.VarChar(100)
+  normalizedPlatform String     @map("normalized_platform") @db.VarChar(100)
   ownerUserId      String       @map("owner_user_id") @db.Uuid
   contactName      String?      @map("contact_name") @db.VarChar(100)
   contactPhone     String?      @map("contact_phone") @db.VarChar(30)
@@ -201,6 +277,7 @@ model Organization {
   contracts  Contract[]
   candidates ProjectExecutorCandidate[]
 
+  @@unique([normalizedPlatform, normalizedName])
   @@map("organizations")
 }
 
@@ -283,7 +360,7 @@ model BankTransaction {
   id                        String               @id @default(uuid()) @db.Uuid
   bankAccountId             String               @map("bank_account_id") @db.Uuid
   transactionNo             String?              @map("transaction_no") @db.VarChar(100)
-  transactionAt             DateTime             @map("transaction_at")
+  transactionAt             DateTime             @map("transaction_at") @db.Date
   counterpartyName          String               @map("counterparty_name") @db.VarChar(200)
   counterpartyBankName      String?              @map("counterparty_bank_name") @db.VarChar(200)
   counterpartyAccountEncrypted String?           @map("counterparty_account_encrypted")
@@ -334,6 +411,7 @@ model Invoice {
   invoiceCode        String?       @map("invoice_code") @db.VarChar(32)
   invoiceNumber      String?       @map("invoice_number") @db.VarChar(64)
   projectId          String        @map("project_id") @db.Uuid
+  direction          InvoiceDirection @default(ISSUED)
   issuedOn           DateTime      @map("issued_on") @db.Date
   invoiceType        String        @map("invoice_type") @db.VarChar(30)
   invoicePlatform    String        @map("invoice_platform") @db.VarChar(100)
@@ -424,6 +502,8 @@ model Membership {
   memberName   String       @map("member_name") @db.VarChar(200)
   committeeId  String       @map("committee_id") @db.Uuid
   memberType   String       @map("member_type") @db.VarChar(50)
+  memberPosition String?    @map("member_position") @db.VarChar(50)
+  certificateIssued Boolean @default(false) @map("certificate_issued")
   pmUserId     String       @map("pm_user_id") @db.Uuid
   joinedOn     DateTime?    @map("joined_on") @db.Date
   status       RecordStatus @default(ACTIVE)
@@ -462,9 +542,10 @@ model Attachment {
   objectId    String   @map("object_id") @db.Uuid
   fileName    String   @map("file_name") @db.VarChar(255)
   storageKey  String   @map("storage_key") @db.VarChar(500)
+  storageProvider String @default("LOCAL") @map("storage_provider") @db.VarChar(10)
   contentType String   @map("content_type") @db.VarChar(100)
   sizeBytes   BigInt   @map("size_bytes")
-  sha256      String   @db.VarChar(64)
+  sha256      String?  @db.VarChar(64)
   uploadedBy  String   @map("uploaded_by") @db.Uuid
   createdAt   DateTime @default(now()) @map("created_at")
 

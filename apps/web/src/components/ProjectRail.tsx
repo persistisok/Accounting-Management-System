@@ -17,7 +17,9 @@ export function ProjectRail({ summary, approvedAmount, executionCost }: { summar
         <ArrowRight className="rail-arrow" />
         <RailNode icon={<Landmark size={18} />} label="已收支持款" value={summary.receivedAmount} detail="来自银行流水" tone="income" />
         <ArrowRight className="rail-arrow" />
-        <RailNode icon={<ReceiptText size={18} />} label="已开票" value={summary.invoicedAmount} detail={`收票差 ${formatMoney(summary.uninvoicedAmount)}`} tone="income" />
+        <RailNode icon={<ReceiptText size={18} />} label="已开票" value={summary.invoicedAmount} detail={`未开票 ${formatMoney(summary.uninvoicedAmount)}`} tone="income" />
+        <ArrowRight className="rail-arrow" />
+        <RailNode icon={<ReceiptText size={18} />} label="已收票" value={summary.receivedInvoiceAmount} detail="收到的有效发票" tone="income" />
       </div>
       <div className="rail-divider"><span>项目编码连接全部凭证</span></div>
       <div className="rail-row expense">

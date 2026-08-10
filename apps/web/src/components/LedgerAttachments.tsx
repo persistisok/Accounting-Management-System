@@ -11,7 +11,8 @@ export async function uploadLedgerAttachments(
   let failedUploads = 0;
   for (const file of files) {
     try {
-      await api.upload(`/attachments/${objectType}/${objectId}`, file);
+      if (objectType === 'PROJECT') await uploadProjectAttachment(objectId, file);
+      else await api.upload(`/attachments/${objectType}/${objectId}`, file);
     } catch {
       failedUploads += 1;
     }
@@ -19,27 +20,84 @@ export async function uploadLedgerAttachments(
   return failedUploads;
 }
 
+interface MultipartInitResponse {
+  token: string;
+  partSize: number;
+  partCount: number;
+  contentType: string;
+}
+
+async function uploadProjectAttachment(objectId: string, file: File) {
+  const header = new Uint8Array(await file.slice(0, 8).arrayBuffer());
+  const headerBase64 = window.btoa(String.fromCharCode(...header));
+  const initialized = await api.post<MultipartInitResponse>(`/attachments/PROJECT/${objectId}/multipart/init`, {
+    fileName: file.name,
+    sizeBytes: file.size,
+    headerBase64,
+  });
+  const parts = new Array<{ number: number; etag: string }>(initialized.partCount);
+  let nextPart = 1;
+  try {
+    async function worker() {
+      while (nextPart <= initialized.partCount) {
+        const partNumber = nextPart++;
+        const signed = await api.post<{ url: string; contentType: string }>(`/attachments/PROJECT/${objectId}/multipart/part-url`, {
+          token: initialized.token,
+          partNumber,
+        });
+        const start = (partNumber - 1) * initialized.partSize;
+        const body = file.slice(start, Math.min(file.size, start + initialized.partSize), initialized.contentType);
+        const response = await fetch(signed.url, {
+          method: 'PUT',
+          headers: { 'Content-Type': signed.contentType },
+          body,
+        });
+        if (!response.ok) throw new Error(`附件第 ${partNumber} 个分片上传失败`);
+        const etag = response.headers.get('ETag');
+        if (!etag) throw new Error('OSS 未返回附件分片校验标识，请检查跨域暴露 Header 配置');
+        parts[partNumber - 1] = { number: partNumber, etag };
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(3, initialized.partCount) }, () => worker()));
+    await api.post(`/attachments/PROJECT/${objectId}/multipart/complete`, { token: initialized.token, parts });
+  } catch (error) {
+    await api.post(`/attachments/PROJECT/${objectId}/multipart/abort`, { token: initialized.token }).catch(() => undefined);
+    throw error;
+  }
+}
+
 export function PdfAttachmentInput({
   files,
   onFilesChange,
   existingCount = 0,
+  projectFiles = false,
 }: {
   files: File[];
   onFilesChange: (files: File[]) => void;
   existingCount?: number;
+  projectFiles?: boolean;
 }) {
+  const [inputError, setInputError] = useState('');
   const totalCount = existingCount + files.length;
   const remainingCount = Math.max(0, 10 - totalCount);
 
   function change(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
-    if (file && totalCount < 10) onFilesChange([...files, file]);
+    setInputError('');
+    if (file && totalCount < 10) {
+      const extension = file.name.slice(file.name.lastIndexOf('.')).toLowerCase();
+      const allowed = projectFiles ? ['.pdf', '.zip', '.rar', '.7z'] : ['.pdf'];
+      const maxSize = projectFiles ? 5 * 1024 * 1024 * 1024 : 10 * 1024 * 1024;
+      if (!allowed.includes(extension)) setInputError(projectFiles ? '仅支持 PDF、ZIP、RAR 或 7Z 文件。' : '仅支持 PDF 文件。');
+      else if (file.size <= 0 || file.size > maxSize) setInputError(projectFiles ? '单个文件不能超过 5GB。' : '单个文件不能超过 10MB。');
+      else onFilesChange([...files, file]);
+    }
     event.target.value = '';
   }
 
   return <div className="pdf-upload-queue">
     <div className="pdf-upload-heading">
-      <input className="control pdf-file-input" type="file" accept="application/pdf,.pdf" disabled={remainingCount === 0} onChange={change} />
+      <input className="control pdf-file-input" type="file" accept={projectFiles ? ".pdf,.zip,.rar,.7z,application/pdf,application/zip,application/vnd.rar,application/x-7z-compressed" : "application/pdf,.pdf"} disabled={remainingCount === 0} onChange={change} />
       <small>已有 {existingCount} 份 · 待上传 {files.length} 份 · 还可添加 {remainingCount} 份</small>
     </div>
     {files.length > 0 && <div className="pending-file-list">
@@ -48,6 +106,7 @@ export function PdfAttachmentInput({
         <button type="button" onClick={() => onFilesChange(files.filter((_, fileIndex) => fileIndex !== index))}><Trash2 size={12} />移除</button>
       </span>)}
     </div>}
+    {inputError && <small className="attachment-error">{inputError}</small>}
     {remainingCount === 0 && <small className="attachment-limit">已达到最多 10 份附件的限制。</small>}
   </div>;
 }
@@ -75,6 +134,14 @@ export function LedgerAttachmentList({
     setBusyId(attachment.id);
     setError('');
     try {
+      const direct = await api.get<{ url: string | null }>(`/attachments/${objectType}/${objectId}/${attachment.id}/download-url`);
+      if (direct.url) {
+        const link = document.createElement('a');
+        link.href = direct.url;
+        link.download = attachment.fileName;
+        link.click();
+        return;
+      }
       const blob = await api.download(`/attachments/${objectType}/${objectId}/${attachment.id}/download`);
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');

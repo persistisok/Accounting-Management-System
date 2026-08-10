@@ -1,23 +1,28 @@
 import {
-  BookOpenText, BriefcaseBusiness, Building2, ChevronLeft, FileSignature,
+  BookOpenText, BriefcaseBusiness, Building2, ChartNoAxesCombined, ChevronLeft, FileSignature,
   KeyRound, Landmark, LogOut, Menu, ReceiptText, Search, ShieldCheck, UserRoundCog, UsersRound, X,
 } from 'lucide-react';
 import { useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
+import { hasPermission } from '../lib/permissions';
+import type { PermissionResource } from '../lib/types';
 
-const groups = [
-  { label: '项目管理', items: [{ to: '/projects', label: '项目台账', icon: BriefcaseBusiness }] },
+const groups: { label: string; items: { to: string; label: string; icon: typeof BriefcaseBusiness; resource: PermissionResource }[] }[] = [
+  { label: '项目管理', items: [
+    { to: '/project-overview', label: '项目全览', icon: ChartNoAxesCombined, resource: 'PROJECTS' },
+    { to: '/projects', label: '项目台账', icon: BriefcaseBusiness, resource: 'PROJECTS' },
+  ] },
   { label: '业务台账', items: [
-    { to: '/contracts', label: '合同台账', icon: FileSignature },
-    { to: '/banking', label: '银行日记账', icon: Landmark },
-    { to: '/invoices', label: '发票台账', icon: ReceiptText },
+    { to: '/contracts', label: '合同台账', icon: FileSignature, resource: 'CONTRACTS' },
+    { to: '/banking', label: '银行日记账', icon: Landmark, resource: 'BANKING' },
+    { to: '/invoices', label: '发票台账', icon: ReceiptText, resource: 'INVOICES' },
   ] },
   { label: '基础资料', items: [
-    { to: '/supporters', label: '支持方库', icon: Building2 },
-    { to: '/executors', label: '执行方库', icon: BookOpenText },
-    { to: '/experts', label: '专家库', icon: ShieldCheck },
-    { to: '/members', label: '会员库', icon: UsersRound },
+    { to: '/supporters', label: '支持方库', icon: Building2, resource: 'SUPPORTERS' },
+    { to: '/executors', label: '执行方库', icon: BookOpenText, resource: 'EXECUTORS' },
+    { to: '/experts', label: '专家库', icon: ShieldCheck, resource: 'EXPERTS' },
+    { to: '/members', label: '会员库', icon: UsersRound, resource: 'MEMBERS' },
   ] },
 ];
 
@@ -31,10 +36,11 @@ export function AppShell() {
       { to: '/project-managers', label: 'PM 管理', icon: UserRoundCog },
       { to: '/accounts', label: '账号管理', icon: KeyRound },
     ]
-    : user?.role === 'ADMIN'
-      ? [{ to: '/project-managers', label: 'PM 管理', icon: UserRoundCog }]
-      : [];
-  const visibleGroups = systemItems.length ? [...groups, { label: '系统管理', items: systemItems }] : groups;
+    : [];
+  const businessGroups = groups
+    .map((group) => ({ ...group, items: group.items.filter((item) => hasPermission(user, item.resource, 'VIEW')) }))
+    .filter((group) => group.items.length);
+  const visibleGroups = systemItems.length ? [...businessGroups, { label: '系统管理', items: systemItems }] : businessGroups;
 
   function globalSearch(event: React.FormEvent) {
     event.preventDefault();
@@ -61,7 +67,7 @@ export function AppShell() {
         ))}</nav>
         <div className="sidebar-foot">
           <span className="user-avatar">{user?.displayName.slice(0, 1)}</span>
-          <span><strong>{user?.displayName}</strong><small>{user?.role === 'SYSTEM_ADMIN' ? '系统管理员' : user?.role === 'ADMIN' ? '普通管理员' : '访客'}</small></span>
+          <span><strong>{user?.displayName}</strong><small>{user?.role === 'SYSTEM_ADMIN' ? '系统管理员' : user?.role === 'ADMIN' ? '普通管理员' : user?.role === 'PM' ? 'PM' : '访客'}</small></span>
           <button onClick={logout} aria-label="退出登录"><LogOut size={17} /></button>
         </div>
       </aside>
@@ -69,9 +75,9 @@ export function AppShell() {
       <div className="workspace">
         <header className="topbar">
           <button className="mobile-menu" onClick={() => setMenuOpen(true)} aria-label="打开导航"><Menu size={20} /></button>
-          <form className="global-search" onSubmit={globalSearch}>
+          {hasPermission(user, 'PROJECTS', 'VIEW') && <form className="global-search" onSubmit={globalSearch}>
             <Search size={17} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索项目编码或名称" /><kbd>↵</kbd>
-          </form>
+          </form>}
           <div className="topbar-meta"><span className="live-dot" /> 数据实时汇总</div>
         </header>
         <main className="main-content"><Outlet /></main>

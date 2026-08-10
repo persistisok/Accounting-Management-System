@@ -1,5 +1,27 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { BankingService } from './banking.service';
+import { normalizeImportDate, parseCsv } from '../common/csv-import';
+import { BankingService, calculateExpertIndividualIncomeTax } from './banking.service';
+
+describe('bank transaction import format', () => {
+  it('parses quoted CSV values and Chinese date formats', () => {
+    expect(parseCsv('名称,性质\r\n"某某,公司","支持款"\r\n')).toEqual([
+      ['名称', '性质'], ['某某,公司', '支持款'],
+    ]);
+    expect(normalizeImportDate('2026/8/10', '交易日期')).toBe('2026-08-10');
+    expect(normalizeImportDate('2026年08月10日', '交易日期')).toBe('2026-08-10');
+  });
+
+  it('rejects invalid calendar dates', () => {
+    expect(() => normalizeImportDate('2026/02/30', '交易日期')).toThrow('不是有效日期');
+  });
+
+  it('calculates expert individual income tax using the configured quick deductions', () => {
+    expect(calculateExpertIndividualIncomeTax(800)).toBe(0);
+    expect(calculateExpertIndividualIncomeTax(1000)).toBe(40);
+    expect(calculateExpertIndividualIncomeTax(5000)).toBe(800);
+    expect(calculateExpertIndividualIncomeTax(50000)).toBe(10000);
+  });
+});
 
 const transaction = {
   id: '00000000-0000-4000-8000-000000000020',
@@ -22,7 +44,9 @@ describe('BankingService transaction safeguards', () => {
   const audit = { record: vi.fn() };
   const sensitive = {
     encrypt: vi.fn((value: string) => `encrypted:${value}`),
+    decrypt: vi.fn((value?: string) => value?.replace(/^encrypted:/, '')),
     hash: vi.fn((value: string) => `hash:${value}`),
+    maskId: vi.fn((value?: string) => value ? `***${value.slice(-4)}` : undefined),
     maskBank: vi.fn((value: string) => `**** ${value.slice(-4)}`),
   };
   const prisma = {
@@ -181,6 +205,53 @@ describe('BankingService transaction safeguards', () => {
     expect(prisma.bankAllocation.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({
       projectId: '00000000-0000-4000-8000-000000000002', expertProfileId: '00000000-0000-4000-8000-000000000003', category: 'EXPERT_FEE',
     }) }));
+  });
+
+  it('matches an imported expert by name and ID number and returns the tax report', async () => {
+    prisma.bankAccount.findFirst.mockResolvedValue({ id: 'account-id' });
+    prisma.expertProfile.findFirst.mockResolvedValue({
+      id: 'expert-id',
+      status: 'ACTIVE',
+      reviewStatus: 'APPROVED',
+      professionalTitle: '主任医师',
+      bankName: '测试银行',
+      bankAccountEncrypted: 'encrypted:6222000012345678',
+      person: {
+        idNumberEncrypted: 'encrypted:110101199001011234',
+        phoneEncrypted: 'encrypted:13800138000',
+      },
+    });
+    const createTransaction = vi.spyOn(service, 'createTransaction').mockResolvedValue({} as never);
+    const header = service.importTemplate().toString('utf8');
+    const row = [
+      '6222000099990000', '支出', '专家费支出', 'PRJ-2026-001', '张三', '110101199001011234', '', '',
+      '2026/08/10', '', '', '', '5000.00', '专家费',
+    ].join(',');
+    const content = Buffer.from(`${header}${row}\r\n`, 'utf8');
+
+    const result = await service.importTransactions({
+      originalname: '银行日记账.csv', mimetype: 'text/csv', size: content.length, buffer: content,
+    }, {
+      id: '00000000-0000-4000-8000-000000000099', username: 'admin', displayName: '管理员',
+      role: 'SYSTEM_ADMIN', projectManagerId: null, permissions: [],
+    });
+
+    expect(createTransaction).toHaveBeenCalledWith(expect.objectContaining({
+      expertProfileId: 'expert-id',
+      counterpartyName: '张三',
+      counterpartyBankName: '测试银行',
+      counterpartyAccountNumber: '6222000012345678',
+    }), expect.any(String), expect.any(Object), expect.objectContaining({
+      rawData: expect.objectContaining({ 专家身份证号: '***1234' }),
+    }));
+    expect(result).toMatchObject({ total: 1, successCount: 1, failureCount: 0 });
+    const reportRows = parseCsv(Buffer.from(result.expertReport!.contentBase64, 'base64').toString('utf8').replace(/^\uFEFF/, ''));
+    expect(reportRows[0]).toEqual(['姓名', '身份证号', '支付金额', '是否入库', '职称', '身份证号', '手机号', '开户行', '银行卡号', '个税']);
+    expect(reportRows[1]).toEqual([
+      '张三', '110101199001011234', '5000.00', '是', '主任医师', '110101199001011234',
+      '13800138000', '测试银行', '6222000012345678', '800.00',
+    ]);
+    expect(audit.record).toHaveBeenCalledWith(expect.objectContaining({ action: 'EXPORT_SENSITIVE', objectType: 'BANK_EXPERT_REPORT' }));
   });
 
   it('allocates a membership payment to the oldest outstanding dues without a project', async () => {

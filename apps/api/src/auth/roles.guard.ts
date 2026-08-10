@@ -2,6 +2,7 @@ import { CanActivate, ExecutionContext, ForbiddenException, Injectable } from '@
 import { Reflector } from '@nestjs/core';
 import { AuthUser } from '../common/current-user.decorator';
 import { AppRole, ROLES_KEY } from './roles.decorator';
+import { hasPermission, PERMISSION_KEY, type RequiredPermission } from './permissions';
 
 @Injectable()
 export class RolesGuard implements CanActivate {
@@ -9,9 +10,14 @@ export class RolesGuard implements CanActivate {
 
   canActivate(context: ExecutionContext) {
     const roles = this.reflector.getAllAndOverride<AppRole[]>(ROLES_KEY, [context.getHandler(), context.getClass()]);
-    if (!roles?.length) return true;
     const user = context.switchToHttp().getRequest<{ user?: AuthUser }>().user;
-    if (user && roles.includes(user.role as AppRole)) return true;
-    throw new ForbiddenException('当前角色无权执行此操作');
+    if (roles?.length && (!user || !roles.includes(user.role as AppRole))) {
+      throw new ForbiddenException('当前角色无权执行此操作');
+    }
+    const permission = this.reflector.getAllAndOverride<RequiredPermission>(PERMISSION_KEY, [context.getHandler(), context.getClass()]);
+    if (permission && !hasPermission(user, permission.resource, permission.level)) {
+      throw new ForbiddenException('当前账号没有该模块的操作权限');
+    }
+    return true;
   }
 }

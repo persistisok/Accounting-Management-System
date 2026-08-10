@@ -1,16 +1,19 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
+import { attachmentMap } from '../attachments/attachment-view';
 import { PrismaService } from '../prisma.service';
+import type { AuthUser } from '../common/current-user.decorator';
 import { CommitteeListQueryDto, CreateCommitteeDto, CreateMemberDueDto, CreateMembershipDto, MembershipListQueryDto, UpdateCommitteeDto, UpdateMemberDueDto, UpdateMembershipDto } from './memberships.dto';
 
 @Injectable()
 export class MembershipsService {
   constructor(private readonly prisma: PrismaService, private readonly audit: AuditService) {}
 
-  async committees(query: CommitteeListQueryDto) {
+  async committees(query: CommitteeListQueryDto, user?: AuthUser) {
     const where: Prisma.CommitteeWhereInput = {
       status: 'ACTIVE',
+      ...(user?.role === 'PM' ? { ownerUserId: user.projectManagerId ?? '__unbound_pm__' } : {}),
       ...(query.q ? { OR: [
         { committeeCode: { contains: query.q, mode: 'insensitive' } },
         { name: { contains: query.q, mode: 'insensitive' } },
@@ -29,17 +32,19 @@ export class MembershipsService {
     return { items, total };
   }
 
-  committeeOptions() {
+  committeeOptions(user?: AuthUser) {
     return this.prisma.committee.findMany({
-      where: { status: 'ACTIVE' },
+      where: { status: 'ACTIVE', ...(user?.role === 'PM' ? { ownerUserId: user.projectManagerId ?? '__unbound_pm__' } : {}) },
       select: { id: true, committeeCode: true, name: true },
       orderBy: { name: 'asc' },
     });
   }
 
-  async createCommittee(dto: CreateCommitteeDto, actorUserId: string) {
-    const data = { ...dto, committeeCode: dto.committeeCode.trim(), name: dto.name.trim() };
-    await this.requireActivePm(dto.ownerUserId);
+  async createCommittee(dto: CreateCommitteeDto, actorUserId: string, user?: AuthUser) {
+    const ownerUserId = user?.role === 'PM' ? user.projectManagerId : dto.ownerUserId;
+    if (!ownerUserId) throw new NotFoundException('PM 账号必须绑定 PM');
+    const data = { ...dto, ownerUserId, committeeCode: dto.committeeCode.trim(), name: dto.name.trim() };
+    await this.requireActivePm(ownerUserId);
     await this.requireUniqueCommittee(data.committeeCode, data.name);
     let committee;
     try {
@@ -56,8 +61,8 @@ export class MembershipsService {
     return committee;
   }
 
-  async updateCommittee(id: string, dto: UpdateCommitteeDto, actorUserId: string) {
-    const before = await this.prisma.committee.findUnique({ where: { id } });
+  async updateCommittee(id: string, dto: UpdateCommitteeDto, actorUserId: string, user?: AuthUser) {
+    const before = await this.prisma.committee.findFirst({ where: { id, ...(user?.role === 'PM' ? { ownerUserId: user.projectManagerId ?? '__unbound_pm__' } : {}) } });
     if (!before) throw new NotFoundException('专委会不存在');
     if (dto.ownerUserId) await this.requireActivePm(dto.ownerUserId);
     const committeeCode = dto.committeeCode?.trim() ?? before.committeeCode;
@@ -66,7 +71,7 @@ export class MembershipsService {
     let committee;
     try {
       committee = await this.prisma.committee.update({
-        where: { id }, data: { ...dto, committeeCode, name, ...(dto.establishedOn ? { establishedOn: new Date(dto.establishedOn) } : {}) },
+        where: { id }, data: { ...dto, ...(user?.role === 'PM' ? { ownerUserId: user.projectManagerId! } : {}), committeeCode, name, ...(dto.establishedOn ? { establishedOn: new Date(dto.establishedOn) } : {}) },
         include: { owner: { select: { id: true, displayName: true } }, _count: { select: { memberships: true } } },
       });
     } catch (error) {
@@ -76,17 +81,18 @@ export class MembershipsService {
     return committee;
   }
 
-  async deactivateCommittee(id: string, actorUserId: string) {
-    const before = await this.prisma.committee.findUnique({ where: { id } });
+  async deactivateCommittee(id: string, actorUserId: string, user?: AuthUser) {
+    const before = await this.prisma.committee.findFirst({ where: { id, ...(user?.role === 'PM' ? { ownerUserId: user.projectManagerId ?? '__unbound_pm__' } : {}) } });
     if (!before) throw new NotFoundException('专委会不存在');
     const committee = await this.prisma.committee.update({ where: { id }, data: { status: 'INACTIVE' } });
     await this.audit.record({ actorUserId, action: 'DELETE', objectType: 'COMMITTEE', objectId: id, beforeData: { status: before.status }, afterData: { status: committee.status } });
     return committee;
   }
 
-  async list(query: MembershipListQueryDto) {
+  async list(query: MembershipListQueryDto, user?: AuthUser) {
     const where: Prisma.MembershipWhereInput = {
       ...(query.committeeId ? { committeeId: query.committeeId } : {}),
+      ...(user?.role === 'PM' ? { pmUserId: user.projectManagerId ?? '__unbound_pm__' } : {}),
       ...(query.q ? { OR: [
         { memberName: { contains: query.q, mode: 'insensitive' } },
         { committee: { name: { contains: query.q, mode: 'insensitive' } } },
@@ -111,9 +117,11 @@ export class MembershipsService {
       }),
       this.prisma.membership.count({ where }),
     ]);
+    const attachments = await attachmentMap(this.prisma, 'MEMBERSHIP', items.map((item) => item.id));
     return {
       items: items.map((item) => ({
         ...item,
+        attachments: attachments[item.id] ?? [],
         dues: item.dues.map((due) => ({
           ...due,
           amountPaid: due.allocations.reduce((sum, allocation) => sum + Number(allocation.allocatedAmount), 0).toFixed(2),
@@ -124,8 +132,10 @@ export class MembershipsService {
     };
   }
 
-  async memberDues(membershipId: string, query: { page: number; pageSize: number }) {
-    const membership = await this.prisma.membership.findUnique({ where: { id: membershipId }, select: { id: true } });
+  async memberDues(membershipId: string, query: { page: number; pageSize: number }, user?: AuthUser) {
+    const membership = user?.role === 'PM'
+      ? await this.prisma.membership.findFirst({ where: { id: membershipId, pmUserId: user.projectManagerId ?? '__unbound_pm__' }, select: { id: true } })
+      : await this.prisma.membership.findUnique({ where: { id: membershipId }, select: { id: true } });
     if (!membership) throw new NotFoundException('会员不存在');
     const where: Prisma.MemberDueWhereInput = { membershipId };
     const [items, total] = await this.prisma.$transaction([
@@ -148,10 +158,13 @@ export class MembershipsService {
     };
   }
 
-  async createMembership(dto: CreateMembershipDto, actorUserId: string) {
-    await Promise.all([this.requireActivePm(dto.pmUserId), this.requireActiveCommittee(dto.committeeId)]);
+  async createMembership(dto: CreateMembershipDto, actorUserId: string, user?: AuthUser) {
+    const pmUserId = user?.role === 'PM' ? user.projectManagerId : dto.pmUserId;
+    if (!pmUserId) throw new NotFoundException('PM 账号必须绑定 PM');
+    await Promise.all([this.requireActivePm(pmUserId), this.requireActiveCommittee(dto.committeeId, user)]);
+    const { joinedOn, certificateIssued, ...membershipData } = dto;
     const membership = await this.prisma.membership.create({
-      data: { ...dto, joinedOn: dto.joinedOn ? new Date(dto.joinedOn) : null },
+      data: { ...membershipData, pmUserId, certificateIssued: certificateIssued === 'true', joinedOn: joinedOn ? new Date(joinedOn) : null },
       include: { committee: true, pm: { select: { displayName: true } } },
     });
     await this.audit.record({
@@ -161,30 +174,31 @@ export class MembershipsService {
     return membership;
   }
 
-  async updateMembership(id: string, dto: UpdateMembershipDto, actorUserId: string) {
-    const before = await this.prisma.membership.findUnique({ where: { id } });
+  async updateMembership(id: string, dto: UpdateMembershipDto, actorUserId: string, user?: AuthUser) {
+    const before = await this.prisma.membership.findFirst({ where: { id, ...(user?.role === 'PM' ? { pmUserId: user.projectManagerId ?? '__unbound_pm__' } : {}) } });
     if (!before) throw new NotFoundException('会员不存在');
     if (dto.pmUserId) await this.requireActivePm(dto.pmUserId);
-    if (dto.committeeId) await this.requireActiveCommittee(dto.committeeId);
+    if (dto.committeeId) await this.requireActiveCommittee(dto.committeeId, user);
+    const { joinedOn, certificateIssued, ...membershipData } = dto;
     const membership = await this.prisma.membership.update({
-      where: { id }, data: { ...dto, ...(dto.joinedOn ? { joinedOn: new Date(dto.joinedOn) } : {}) },
+      where: { id }, data: { ...membershipData, ...(user?.role === 'PM' ? { pmUserId: user.projectManagerId! } : {}), ...(joinedOn ? { joinedOn: new Date(joinedOn) } : {}), ...(certificateIssued !== undefined ? { certificateIssued: certificateIssued === 'true' } : {}) },
       include: { committee: true, pm: { select: { id: true, displayName: true } }, dues: true },
     });
     await this.audit.record({ actorUserId, action: 'UPDATE', objectType: 'MEMBERSHIP', objectId: id, beforeData: { memberName: before.memberName, status: before.status }, afterData: { memberName: membership.memberName, status: membership.status } });
     return membership;
   }
 
-  async deactivateMembership(id: string, actorUserId: string) {
-    const before = await this.prisma.membership.findUnique({ where: { id } });
+  async deactivateMembership(id: string, actorUserId: string, user?: AuthUser) {
+    const before = await this.prisma.membership.findFirst({ where: { id, ...(user?.role === 'PM' ? { pmUserId: user.projectManagerId ?? '__unbound_pm__' } : {}) } });
     if (!before) throw new NotFoundException('会员不存在');
     const membership = await this.prisma.membership.update({ where: { id }, data: { status: 'INACTIVE' } });
     await this.audit.record({ actorUserId, action: 'DELETE', objectType: 'MEMBERSHIP', objectId: id, beforeData: { status: before.status }, afterData: { status: membership.status } });
     return membership;
   }
 
-  async createDue(dto: CreateMemberDueDto, actorUserId: string) {
+  async createDue(dto: CreateMemberDueDto, actorUserId: string, user?: AuthUser) {
     if (Number(dto.amountDue) <= 0) throw new BadRequestException('应收金额必须大于零');
-    const membership = await this.prisma.membership.findFirst({ where: { id: dto.membershipId, status: 'ACTIVE' }, select: { id: true } });
+    const membership = await this.prisma.membership.findFirst({ where: { id: dto.membershipId, status: 'ACTIVE', ...(user?.role === 'PM' ? { pmUserId: user.projectManagerId ?? '__unbound_pm__' } : {}) }, select: { id: true } });
     if (!membership) throw new NotFoundException('会员不存在或已停用');
     const due = await this.prisma.memberDue.create({
       data: { ...dto, dueOn: dto.dueOn ? new Date(dto.dueOn) : null }, include: { membership: true },
@@ -196,8 +210,8 @@ export class MembershipsService {
     return due;
   }
 
-  async updateDue(id: string, dto: UpdateMemberDueDto, actorUserId: string) {
-    const before = await this.prisma.memberDue.findUnique({ where: { id }, include: { allocations: { where: { status: 'CONFIRMED' }, select: { id: true } } } });
+  async updateDue(id: string, dto: UpdateMemberDueDto, actorUserId: string, user?: AuthUser) {
+    const before = await this.prisma.memberDue.findFirst({ where: { id, ...(user?.role === 'PM' ? { membership: { pmUserId: user.projectManagerId ?? '__unbound_pm__' } } : {}) }, include: { allocations: { where: { status: 'CONFIRMED' }, select: { id: true } } } });
     if (!before) throw new NotFoundException('会费应收不存在');
     if (before.allocations.length && dto.amountDue !== undefined) throw new BadRequestException('已有收款分配的会费不能修改应收金额');
     if (dto.amountDue !== undefined && Number(dto.amountDue) <= 0) throw new BadRequestException('应收金额必须大于零');
@@ -206,8 +220,8 @@ export class MembershipsService {
     return due;
   }
 
-  async waiveDue(id: string, actorUserId: string) {
-    const before = await this.prisma.memberDue.findUnique({ where: { id }, include: { allocations: { where: { status: 'CONFIRMED' }, select: { id: true } } } });
+  async waiveDue(id: string, actorUserId: string, user?: AuthUser) {
+    const before = await this.prisma.memberDue.findFirst({ where: { id, ...(user?.role === 'PM' ? { membership: { pmUserId: user.projectManagerId ?? '__unbound_pm__' } } : {}) }, include: { allocations: { where: { status: 'CONFIRMED' }, select: { id: true } } } });
     if (!before) throw new NotFoundException('会费应收不存在');
     if (before.allocations.length) throw new BadRequestException('已有收款分配的会费不能删除');
     const due = await this.prisma.memberDue.update({ where: { id }, data: { status: 'WAIVED' } });
@@ -215,17 +229,17 @@ export class MembershipsService {
     return due;
   }
 
-  dueOptions() {
+  dueOptions(user?: AuthUser) {
     return this.prisma.memberDue.findMany({
-      where: { status: { in: ['UNPAID', 'PARTIAL'] } },
+      where: { status: { in: ['UNPAID', 'PARTIAL'] }, ...(user?.role === 'PM' ? { membership: { pmUserId: user.projectManagerId ?? '__unbound_pm__' } } : {}) },
       select: { id: true, dueCode: true, periodLabel: true, amountDue: true, membership: { include: { committee: true } } },
       orderBy: { dueOn: 'asc' },
     });
   }
 
-  async paymentOptions() {
+  async paymentOptions(user?: AuthUser) {
     const memberships = await this.prisma.membership.findMany({
-      where: { status: 'ACTIVE' },
+      where: { status: 'ACTIVE', ...(user?.role === 'PM' ? { pmUserId: user.projectManagerId ?? '__unbound_pm__' } : {}) },
       select: {
         id: true, memberName: true,
         committee: { select: { committeeCode: true, name: true } },
@@ -253,8 +267,8 @@ export class MembershipsService {
     if (!pm) throw new NotFoundException('负责 PM 不存在或已停用');
   }
 
-  private async requireActiveCommittee(id: string) {
-    const committee = await this.prisma.committee.findFirst({ where: { id, status: 'ACTIVE' }, select: { id: true } });
+  private async requireActiveCommittee(id: string, user?: AuthUser) {
+    const committee = await this.prisma.committee.findFirst({ where: { id, status: 'ACTIVE', ...(user?.role === 'PM' ? { ownerUserId: user.projectManagerId ?? '__unbound_pm__' } : {}) }, select: { id: true } });
     if (!committee) throw new NotFoundException('专委会不存在或已停用');
   }
 

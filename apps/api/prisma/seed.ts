@@ -44,6 +44,7 @@ async function main() {
       name: '远川医学公益基金会',
       normalizedName: '远川医学公益基金会',
       platform: '公益合作平台',
+      normalizedPlatform: '公益合作平台',
       ownerUserId: pm.id,
       contactName: '周老师',
       contactPhone: '138****7031',
@@ -59,6 +60,7 @@ async function main() {
       name: '知行健康传播中心',
       normalizedName: '知行健康传播中心',
       platform: '执行伙伴平台',
+      normalizedPlatform: '执行伙伴平台',
       ownerUserId: pm.id,
       contactName: '陈经理',
       contactPhone: '139****2256',
@@ -68,13 +70,15 @@ async function main() {
 
   const project = await prisma.project.upsert({
     where: { projectCode: 'PRJ-2026-001' },
-    update: { pmName: pm.displayName, pmUserId: pm.id, periodMonths: 10, executionCost: '430000.00' },
+    update: { platformAbbreviation: 'GY', pmName: pm.displayName, pmUserId: pm.id, projectType: '公益项目', periodMonths: 10, executionCost: '430000.00' },
     create: {
       projectCode: 'PRJ-2026-001',
       platform: '公益合作平台',
+      platformAbbreviation: 'GY',
       publishedOn: new Date('2026-03-01'),
       name: '基层呼吸健康能力提升项目',
       nature: '公益支持',
+      projectType: '公益项目',
       periodMonths: 10,
       approvedAmount: '800000.00',
       executionCost: '430000.00',
@@ -83,12 +87,6 @@ async function main() {
       status: 'ACTIVE',
     },
   });
-  await prisma.projectCodeCounter.upsert({
-    where: { year: 2026 },
-    create: { year: 2026, nextNumber: 2 },
-    update: {},
-  });
-
   await prisma.contract.upsert({
     where: { contractNo: 'SUP-2026-001' },
     update: {},

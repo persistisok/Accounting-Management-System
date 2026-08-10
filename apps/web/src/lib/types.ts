@@ -2,13 +2,18 @@ export interface User {
   id: string;
   username: string;
   displayName: string;
-  role: 'SYSTEM_ADMIN' | 'ADMIN' | 'GUEST';
+  role: 'SYSTEM_ADMIN' | 'ADMIN' | 'PM' | 'GUEST';
   projectManagerId: string | null;
   projectManager?: ProjectManager | null;
   status: string;
   createdAt: string;
   updatedAt: string;
+  permissions: AccountPermission[];
 }
+
+export type PermissionResource = 'PROJECTS' | 'CONTRACTS' | 'BANKING' | 'INVOICES' | 'SUPPORTERS' | 'EXECUTORS' | 'EXPERTS' | 'MEMBERS';
+export type PermissionLevel = 'VIEW' | 'EDIT' | 'REVIEW';
+export interface AccountPermission { resource: PermissionResource; level: PermissionLevel }
 
 export interface ProjectManager {
   id: string;
@@ -22,7 +27,7 @@ export interface ProjectManager {
 
 export interface ListResponse<T> { items: T[]; total: number }
 
-export type LedgerAttachmentObjectType = 'PROJECT' | 'CONTRACT' | 'BANK_TRANSACTION' | 'INVOICE';
+export type LedgerAttachmentObjectType = 'PROJECT' | 'CONTRACT' | 'BANK_TRANSACTION' | 'INVOICE' | 'MEMBERSHIP';
 
 export interface LedgerAttachment {
   id: string;
@@ -36,6 +41,7 @@ export interface FinancialSummary {
   receivableAmount: string;
   receivedAmount: string;
   invoicedAmount: string;
+  receivedInvoiceAmount: string;
   payableExecutionAmount: string;
   paidExecutionAmount: string;
   paidExpertAmount: string;
@@ -48,15 +54,30 @@ export interface Project {
   id: string;
   projectCode: string;
   platform: string;
+  platformAbbreviation?: string;
   publishedOn: string;
   name: string;
   nature: string;
+  projectType: string;
   periodMonths: number;
   approvedAmount: string;
   executionCost: string;
   pmName: string;
   pmUserId?: string;
   status: string;
+  archiveStatus: 'UNARCHIVED' | 'ARCHIVED';
+  requestedStatus?: 'CLOSED' | 'ABORTED' | null;
+  statusReviewState?: 'PENDING' | 'APPROVED' | 'REJECTED' | null;
+  statusRequestedAt?: string | null;
+  statusReviewedAt?: string | null;
+  statusRequester?: Pick<User, 'id' | 'displayName'> | null;
+  statusReviewer?: Pick<User, 'id' | 'displayName'> | null;
+  requestedArchiveStatus?: 'ARCHIVED' | null;
+  archiveReviewState?: 'PENDING' | 'APPROVED' | 'REJECTED' | null;
+  archiveRequestedAt?: string | null;
+  archiveReviewedAt?: string | null;
+  archiveRequester?: Pick<User, 'id' | 'displayName'> | null;
+  archiveReviewer?: Pick<User, 'id' | 'displayName'> | null;
   remark?: string;
   pm?: ProjectManager;
   financialSummary: FinancialSummary;
@@ -66,11 +87,18 @@ export interface Project {
   invoices?: Invoice[];
 }
 
+export interface ProjectFilterOptions {
+  platforms: string[];
+  natures: string[];
+  projectTypes: string[];
+}
+
 export interface Organization {
   id: string;
   organizationCode: string;
   name: string;
   platform: string;
+  joinedOn?: string;
   contactName?: string;
   contactPhone?: string;
   status: string;
@@ -129,6 +157,7 @@ export interface BankTransaction {
 export interface Invoice {
   id: string;
   projectId?: string;
+  direction: 'ISSUED' | 'RECEIVED';
   issuedOn: string;
   invoiceType: string;
   invoicePlatform: string;
@@ -202,6 +231,8 @@ export interface Membership {
   id: string;
   memberName: string;
   memberType: string;
+  memberPosition?: string;
+  certificateIssued: boolean;
   committeeId?: string;
   pmUserId?: string;
   joinedOn?: string;
@@ -209,5 +240,6 @@ export interface Membership {
   committee: Committee;
   pm: ProjectManager;
   dues: MemberDue[];
+  attachments?: LedgerAttachment[];
   _count?: { dues: number };
 }
