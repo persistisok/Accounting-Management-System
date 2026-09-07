@@ -271,7 +271,6 @@ model Project {
   contracts  Contract[]
   allocations BankAllocation[]
   invoices   Invoice[]
-  donationReceipts DonationReceipt[]
   candidates ProjectExecutorCandidate[]
   authorizedUsers UserProjectScope[]
   archiveItems ProjectArchiveItem[]
@@ -348,7 +347,6 @@ model Organization {
   owner      ProjectManager             @relation("OrganizationOwner", fields: [ownerUserId], references: [id])
   roles      OrganizationRole[]
   contracts  Contract[]
-  donationReceipts DonationReceipt[] @relation("DonationDonor")
   candidates ProjectExecutorCandidate[]
   serviceCapabilities ExecutorServiceCapability[]
 
@@ -556,23 +554,25 @@ model Invoice {
 }
 
 model DonationReceipt {
-  id            String                @id @default(uuid()) @db.Uuid
-  receiptNumber String                @unique @map("receipt_number") @db.VarChar(64)
-  projectId     String                @map("project_id") @db.Uuid
-  donorId       String                @map("donor_id") @db.Uuid
-  issuedOn      DateTime              @map("issued_on") @db.Date
-  amount        Decimal               @db.Decimal(18, 2)
-  remark        String?               @db.VarChar(500)
-  status        DonationReceiptStatus @default(NORMAL)
-  version       Int                   @default(1)
-  createdAt     DateTime              @default(now()) @map("created_at")
-  updatedAt     DateTime              @updatedAt @map("updated_at")
+  id                 String                @id @default(uuid()) @db.Uuid
+  donorName          String                @map("donor_name") @db.VarChar(200)
+  phoneEncrypted     String?               @map("phone_encrypted")
+  phoneMasked        String?               @map("phone_masked") @db.VarChar(30)
+  issuedOn           DateTime              @map("issued_on") @db.Date
+  invoiceType        String                @map("invoice_type") @db.VarChar(30)
+  invoicePlatform    String                @map("invoice_platform") @db.VarChar(100)
+  sellerName         String                @map("seller_name") @db.VarChar(200)
+  totalAmount        Decimal               @map("total_amount") @db.Decimal(18, 2)
+  taxRate            Decimal               @map("tax_rate") @db.Decimal(8, 6)
+  amountExcludingTax Decimal               @map("amount_excluding_tax") @db.Decimal(18, 2)
+  taxAmount          Decimal               @map("tax_amount") @db.Decimal(18, 2)
+  status             DonationReceiptStatus @default(NORMAL)
+  version            Int                   @default(1)
+  createdAt          DateTime              @default(now()) @map("created_at")
+  updatedAt          DateTime              @updatedAt @map("updated_at")
 
-  project Project      @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  donor   Organization @relation("DonationDonor", fields: [donorId], references: [id], onDelete: Restrict)
-
-  @@index([projectId, status, issuedOn])
-  @@index([donorId, status, issuedOn])
+  @@index([status, issuedOn])
+  @@index([donorName, issuedOn])
   @@map("donation_receipts")
 }
 

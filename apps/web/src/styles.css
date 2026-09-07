@@ -140,6 +140,11 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .audit-detail span { color: var(--muted); font-size: 10px; font-weight: 700; }
 .audit-detail strong { color: var(--ink); font-size: 12px; overflow-wrap: anywhere; }
 .audit-detail section pre { background: white; border: 1px solid var(--line); border-radius: 6px; color: var(--ink-soft); font-family: var(--data); font-size: 10px; margin: 0; max-height: 280px; overflow: auto; padding: 11px; white-space: pre-wrap; }
+.audit-field-list { display: grid; gap: 0; margin: 0; }
+.audit-field-list > div { align-items: baseline; border-bottom: 1px solid var(--line); display: grid; gap: 12px; grid-template-columns: minmax(90px, .7fr) minmax(0, 1.3fr); padding: 8px 0; }
+.audit-field-list > div:last-child { border-bottom: 0; }
+.audit-field-list dt { color: var(--muted); font-size: 10px; font-weight: 700; }
+.audit-field-list dd { color: var(--ink); font-size: 11px; margin: 0; overflow-wrap: anywhere; }
 .invoice-filter-panel { width: min(680px, calc(100vw - 32px)); }
 .invoice-summary-bar { align-items: center; background: linear-gradient(110deg, #f4faf7, #ffffff); border: 1px solid #cfe3dc; border-radius: 9px; display: flex; gap: 24px; margin-bottom: 13px; min-height: 70px; padding: 12px 18px; }
 .invoice-summary-bar > span { display: flex; flex-direction: column; gap: 5px; min-width: 150px; }

@@ -14,7 +14,7 @@ const resourcePaths: [PermissionResource, string][] = [
   ['CONTRACTS', '/contracts'],
   ['BANKING', '/banking'],
   ['INVOICES', '/invoices'],
-  ['DONATION_RECEIPTS', '/donation-receipts'],
+  ['DONATION_RECEIPTS', '/invoices/donation'],
   ['SUPPORTERS', '/supporters'],
   ['EXECUTORS', '/executors'],
   ['EXPERTS', '/experts'],

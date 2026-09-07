@@ -194,7 +194,6 @@ export class ProjectsService {
         ...reviewRelations,
         contracts: { include: { counterparty: true }, orderBy: { signedOn: 'desc' } },
         invoices: { orderBy: { issuedOn: 'desc' } },
-        donationReceipts: { include: { donor: { select: { id: true, organizationCode: true, name: true } } }, orderBy: { issuedOn: 'desc' } },
         allocations: {
           include: {
             bankTransaction: {
@@ -307,7 +306,6 @@ export class ProjectsService {
         contracts: { select: { id: true, status: true } },
         allocations: { select: { id: true, status: true } },
         invoices: { select: { id: true, status: true } },
-        donationReceipts: { select: { id: true, status: true } },
         _count: { select: { candidates: true } },
       },
     });
@@ -324,21 +322,18 @@ export class ProjectsService {
     const activeContracts = project.contracts.filter((item) => item.status !== ContractStatus.VOID);
     const activeAllocations = project.allocations.filter((item) => item.status !== 'REVERSED');
     const activeInvoices = project.invoices.filter((item) => item.status !== InvoiceStatus.VOID);
-    const activeDonationReceipts = project.donationReceipts.filter((item) => item.status !== 'VOID');
-    if (activeContracts.length || activeAllocations.length || activeInvoices.length || activeDonationReceipts.length || project._count.candidates || attachmentCount) {
-      throw new BadRequestException('该项目仍有未作废的合同、流水分配、发票、捐赠票据、执行方候选或项目附件，不能删除');
+    if (activeContracts.length || activeAllocations.length || activeInvoices.length || project._count.candidates || attachmentCount) {
+      throw new BadRequestException('该项目仍有未作废的合同、流水分配、发票、执行方候选或项目附件，不能删除');
     }
     const disposableObjects = [
       ...project.contracts.map((item) => ({ objectType: 'CONTRACT' as const, objectId: item.id })),
       ...project.invoices.map((item) => ({ objectType: 'INVOICE' as const, objectId: item.id })),
-      ...project.donationReceipts.map((item) => ({ objectType: 'DONATION_RECEIPT' as const, objectId: item.id })),
     ];
     const deletedAttachmentCount = await this.attachments.removeForObjects(disposableObjects, actorUserId);
-    const [deletedContracts, deletedAllocations, deletedInvoices, deletedDonationReceipts, deleted] = await this.prisma.$transaction([
+    const [deletedContracts, deletedAllocations, deletedInvoices, deleted] = await this.prisma.$transaction([
       this.prisma.contract.deleteMany({ where: { projectId: id, status: ContractStatus.VOID } }),
       this.prisma.bankAllocation.deleteMany({ where: { projectId: id, status: 'REVERSED' } }),
       this.prisma.invoice.deleteMany({ where: { projectId: id, status: InvoiceStatus.VOID } }),
-      this.prisma.donationReceipt.deleteMany({ where: { projectId: id, status: 'VOID' } }),
       this.prisma.project.delete({ where: { id } }),
     ]);
     await this.audit.record({
@@ -352,7 +347,6 @@ export class ProjectsService {
         deletedVoidContracts: deletedContracts.count,
         deletedReversedAllocations: deletedAllocations.count,
         deletedVoidInvoices: deletedInvoices.count,
-        deletedVoidDonationReceipts: deletedDonationReceipts.count,
         deletedAttachments: deletedAttachmentCount,
       },
     });

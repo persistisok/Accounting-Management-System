@@ -63,7 +63,8 @@ export function App() {
         <Route path="invoices/member-dues" element={<ModuleAccess resource="INVOICES"><InvoicesPage key="member-dues" category="MEMBER_DUE_ISSUED" /></ModuleAccess>} />
         <Route path="invoices/execution-payment" element={<ModuleAccess resource="INVOICES"><InvoicesPage key="execution-payment" category="EXECUTION_PAYMENT_RECEIVED" /></ModuleAccess>} />
         <Route path="invoices/expert-fee" element={<ModuleAccess resource="INVOICES"><InvoicesPage key="expert-fee" category="EXPERT_FEE_RECEIVED" /></ModuleAccess>} />
-        <Route path="donation-receipts" element={<ModuleAccess resource="DONATION_RECEIPTS"><DonationReceiptsPage /></ModuleAccess>} />
+        <Route path="invoices/donation" element={<ModuleAccess resource="DONATION_RECEIPTS"><DonationReceiptsPage /></ModuleAccess>} />
+        <Route path="donation-receipts" element={<Navigate to="/invoices/donation" replace />} />
         <Route path="supporters" element={<ModuleAccess resource="SUPPORTERS"><OrganizationsPage roleType="SUPPORTER" /></ModuleAccess>} />
         <Route path="executors" element={<ModuleAccess resource="EXECUTORS"><OrganizationsPage roleType="EXECUTOR" /></ModuleAccess>} />
         <Route path="experts" element={<ModuleAccess resource="EXPERTS"><ExpertsPage /></ModuleAccess>} />

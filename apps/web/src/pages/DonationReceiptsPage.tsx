@@ -1,9 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Pencil, Plus, RotateCcw, Search, SlidersHorizontal, Trash2 } from 'lucide-react';
-import { type FormEvent, useRef, useState } from 'react';
+import { type FormEvent, useState } from 'react';
 import { ConfirmActionModal } from '../components/ConfirmActionModal';
 import { DataTable, type TableColumn } from '../components/DataTable';
-import { DateInput, Field, FormActions, Input, MoneyInput, SearchableSelect, Select } from '../components/FormControls';
+import { DateInput, Field, FormActions, Input, MoneyInput, Select } from '../components/FormControls';
 import { LedgerAttachmentList, PdfAttachmentInput, uploadLedgerAttachments } from '../components/LedgerAttachments';
 import { LedgerExportButton } from '../components/LedgerExportButton';
 import { Modal } from '../components/Modal';
@@ -16,7 +16,10 @@ import { useAuth } from '../lib/auth';
 import { formObject } from '../lib/form';
 import { formatDate, formatMoney } from '../lib/format';
 import { hasPermission } from '../lib/permissions';
-import type { DonationReceipt, DonationReceiptListResponse, Organization, Project } from '../lib/types';
+import type { DonationReceipt, DonationReceiptListResponse } from '../lib/types';
+
+const formatRate = (value: string) => `${Number(value) * 100}%`;
+const formatRateInput = (value: string) => String(Number(value) * 100);
 
 export function DonationReceiptsPage() {
   const { user } = useAuth();
@@ -24,73 +27,84 @@ export function DonationReceiptsPage() {
   const canEdit = hasPermission(user, 'DONATION_RECEIPTS', 'EDIT');
   const [page, setPage] = useState(1);
   const [filtersOpen, setFiltersOpen] = useState(false);
-  const [q, setQ] = useState('');
-  const [projectId, setProjectId] = useState('');
-  const [donorId, setDonorId] = useState('');
-  const [status, setStatus] = useState('');
-  const [issuedFrom, setIssuedFrom] = useState('');
-  const [issuedTo, setIssuedTo] = useState('');
-  const [draft, setDraft] = useState({ q: '', projectId: '', donorId: '', status: '', issuedFrom: '', issuedTo: '' });
+  const [filters, setFilters] = useState({ q: '', status: '', issuedFrom: '', issuedTo: '' });
+  const [draft, setDraft] = useState(filters);
   const [editing, setEditing] = useState<DonationReceipt | null>(null);
   const [creating, setCreating] = useState(false);
   const [voiding, setVoiding] = useState<DonationReceipt | null>(null);
   const [files, setFiles] = useState<File[]>([]);
+  const [totalAmount, setTotalAmount] = useState('');
+  const [taxRate, setTaxRate] = useState('');
   const [notice, setNotice] = useState('');
-  const filterRef = useRef<HTMLDivElement>(null);
   const queryClient = useQueryClient();
   const query = useQuery({
-    queryKey: ['donation-receipts', q, projectId, donorId, status, issuedFrom, issuedTo, page],
-    queryFn: () => api.get<DonationReceiptListResponse>(`/donation-receipts${queryString({ q, projectId, donorId, status, issuedFrom, issuedTo, page, pageSize: DEFAULT_PAGE_SIZE })}`),
+    queryKey: ['donation-receipts', filters, page],
+    queryFn: () => api.get<DonationReceiptListResponse>(`/donation-receipts${queryString({ ...filters, page, pageSize: DEFAULT_PAGE_SIZE })}`),
   });
-  const projects = useQuery({ queryKey: ['project-options'], queryFn: () => api.get<Pick<Project, 'id' | 'projectCode' | 'name'>[]>('/projects/options') });
-  const donors = useQuery({ queryKey: ['organization-options', 'SUPPORTER'], queryFn: () => api.get<Organization[]>('/organizations/options?roleType=SUPPORTER') });
   const save = useMutation({
     mutationFn: async ({ body, attachments }: { body: Record<string, string>; attachments: File[] }) => {
-      const receipt = editing
-        ? await api.patch<DonationReceipt>(`/donation-receipts/${editing.id}`, body)
-        : await api.post<DonationReceipt>('/donation-receipts', body);
+      const receipt = editing ? await api.patch<DonationReceipt>(`/donation-receipts/${editing.id}`, body) : await api.post<DonationReceipt>('/donation-receipts', body);
       return { failedUploads: await uploadLedgerAttachments('DONATION_RECEIPT', receipt.id, attachments) };
     },
     onSuccess: ({ failedUploads }) => {
       void queryClient.invalidateQueries({ queryKey: ['donation-receipts'] });
-      void queryClient.invalidateQueries({ queryKey: ['project'] });
       setNotice(failedUploads ? `捐赠票据已保存，但有 ${failedUploads} 个附件上传失败，请编辑后重试。` : '');
       closeEditor();
     },
   });
-  const voidReceipt = useMutation({
-    mutationFn: (id: string) => api.post(`/donation-receipts/${id}/void`),
-    onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ['donation-receipts'] }); void queryClient.invalidateQueries({ queryKey: ['project'] }); setVoiding(null); },
-  });
+  const voidReceipt = useMutation({ mutationFn: (id: string) => api.post(`/donation-receipts/${id}/void`), onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ['donation-receipts'] }); setVoiding(null); } });
+  const calculated = calculateDonationAmounts(totalAmount, taxRate);
 
   const columns: TableColumn<DonationReceipt>[] = [
-    { key: 'number', label: '票据编号', render: (row) => <span className="mono key-cell">{row.receiptNumber}</span> },
-    { key: 'project', label: '关联项目', render: (row) => <span className="primary-cell"><strong>{row.project.name}</strong><small className="mono">{row.project.projectCode}</small></span> },
-    { key: 'donor', label: '捐赠方', render: (row) => <span className="primary-cell"><strong>{row.donor.name}</strong><small className="mono">{row.donor.organizationCode}</small></span> },
-    { key: 'date', label: '开具日期', render: (row) => formatDate(row.issuedOn) },
-    { key: 'amount', label: '票据金额', className: 'number', render: (row) => <strong>{formatMoney(row.amount)}</strong> },
-    { key: 'remark', label: '备注', render: (row) => row.remark || '—' },
+    { key: 'donor', label: '捐赠人', render: (row) => <span className="primary-cell"><strong>{row.donorName}</strong><small>{row.phoneMasked || '—'}</small></span> },
+    { key: 'date', label: '发票日期', render: (row) => formatDate(row.issuedOn) },
+    { key: 'type', label: '发票类型 / 平台', render: (row) => <span>{row.invoiceType}<small className="block-muted">{row.invoicePlatform}</small></span> },
+    { key: 'seller', label: '销售方名称', render: (row) => row.sellerName },
+    { key: 'amount', label: '金额', className: 'number', render: (row) => formatMoney(row.amountExcludingTax) },
+    { key: 'tax', label: '税率 / 税额', className: 'number', render: (row) => <span>{formatRate(row.taxRate)}<small className="block-muted">{formatMoney(row.taxAmount)}</small></span> },
+    { key: 'total', label: '价税合计', className: 'number', render: (row) => <strong>{formatMoney(row.totalAmount)}</strong> },
     { key: 'attachments', label: '附件列表', render: (row) => <LedgerAttachmentList objectType="DONATION_RECEIPT" objectId={row.id} attachments={row.attachments ?? []} /> },
     { key: 'status', label: '状态', render: (row) => <StatusChip value={row.status} /> },
   ];
   if (canEdit) columns.push({ key: 'action', label: '操作', render: (row) => <span className="row-actions"><button type="button" className="table-action" disabled={row.status === 'VOID'} onClick={() => openEditor(row)}><Pencil size={14} />编辑</button>{row.status !== 'VOID' && <button type="button" className="table-action danger" onClick={() => setVoiding(row)}><Trash2 size={14} />作废</button>}</span> });
 
   function openEditor(receipt?: DonationReceipt) {
-    setEditing(receipt ?? null); setCreating(!receipt); setFiles([]); setNotice(''); save.reset();
+    setEditing(receipt ?? null);
+    setCreating(!receipt);
+    setFiles([]);
+    setTotalAmount(receipt?.totalAmount ?? '');
+    setTaxRate(receipt ? formatRateInput(receipt.taxRate) : '');
+    setNotice('');
+    save.reset();
   }
-  function closeEditor() { setEditing(null); setCreating(false); setFiles([]); }
-  function applyFilters(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); setQ(draft.q); setProjectId(draft.projectId); setDonorId(draft.donorId); setStatus(draft.status); setIssuedFrom(draft.issuedFrom); setIssuedTo(draft.issuedTo); setPage(1); setFiltersOpen(false);
+  function closeEditor() { setEditing(null); setCreating(false); setFiles([]); setTotalAmount(''); setTaxRate(''); }
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const body = formObject(event.currentTarget);
+    body.taxRate = (Number(body.taxRate) / 100).toString();
+    if (editing && !body.phone) delete body.phone;
+    save.mutate({ body, attachments: files });
   }
-  const filterSummary = [q && `关键词：${q}`, projectId && '已选项目', donorId && '已选捐赠方', status && (status === 'NORMAL' ? '正常' : '已作废'), (issuedFrom || issuedTo) && `${issuedFrom || '不限'} 至 ${issuedTo || '不限'}`].filter(Boolean).join(' · ');
+  function applyFilters(event: FormEvent<HTMLFormElement>) { event.preventDefault(); setFilters(draft); setPage(1); setFiltersOpen(false); }
+  const filterSummary = [filters.q && `关键词：${filters.q}`, filters.status && (filters.status === 'NORMAL' ? '正常' : '已作废'), (filters.issuedFrom || filters.issuedTo) && `${filters.issuedFrom || '不限'} 至 ${filters.issuedTo || '不限'}`].filter(Boolean).join(' · ');
 
   return <div className="page-enter">
-    <PageHeader eyebrow="业务台账 / 捐赠凭证" title="捐赠票据台账" description="登记捐赠票据并关联项目与捐赠方，票据金额独立统计。" action={(user?.role === 'SYSTEM_ADMIN' || canCreate) ? <div className="button-group">{user?.role === 'SYSTEM_ADMIN' && <LedgerExportButton dataset="donation-receipts" fileName="捐赠票据台账" filters={{ q, donationProjectId: projectId, donationDonorId: donorId, donationStatus: status, donationIssuedFrom: issuedFrom, donationIssuedTo: issuedTo }} />}{canCreate && <button type="button" className="button primary" onClick={() => openEditor()}><Plus size={17} />登记捐赠票据</button>}</div> : undefined} />
+    <PageHeader eyebrow="业务台账 / 发票台账" title="捐赠票据" description="捐赠票据信息独立录入，不关联项目、PM 或会员。" action={(user?.role === 'SYSTEM_ADMIN' || canCreate) ? <div className="button-group">{user?.role === 'SYSTEM_ADMIN' && <LedgerExportButton dataset="donation-receipts" fileName="捐赠票据台账" filters={{ q: filters.q, donationStatus: filters.status, donationIssuedFrom: filters.issuedFrom, donationIssuedTo: filters.issuedTo }} />}{canCreate && <button type="button" className="button primary" onClick={() => openEditor()}><Plus size={17} />登记捐赠票据</button>}</div> : undefined} />
     {notice && <div className="operation-banner">{notice}</div>}
-    <section className="invoice-summary-strip donation-summary-strip"><span><small>有效票据数</small><strong>{query.data?.summary.count ?? 0} 张</strong></span><i /><span><small>有效票据金额</small><strong>{formatMoney(query.data?.summary.amount)}</strong></span></section>
-    <div className="toolbar"><div className={`expert-filter-popover${filtersOpen ? ' open' : ''}`} ref={filterRef}><button type="button" className="expert-filter-trigger" onClick={() => { setDraft({ q, projectId, donorId, status, issuedFrom, issuedTo }); setFiltersOpen((value) => !value); }}><Search size={16} /><span><strong>{filterSummary || '搜索与筛选捐赠票据'}</strong><small>票据编号、项目、捐赠方、日期和状态</small></span><SlidersHorizontal size={16} /></button>{filtersOpen && <form className="expert-filter-panel" onSubmit={applyFilters}><div className="expert-filter-panel-heading"><span><strong>筛选捐赠票据</strong><small>未选择的条件默认不限</small></span><button type="button" onClick={() => setDraft({ q: '', projectId: '', donorId: '', status: '', issuedFrom: '', issuedTo: '' })}><RotateCcw size={13} />清空条件</button></div><label><span>关键词</span><Input value={draft.q} onChange={(event) => setDraft((value) => ({ ...value, q: event.target.value }))} /></label><label><span>关联项目</span><SearchableSelect ariaLabel="筛选关联项目" defaultValue={draft.projectId} placeholder="全部项目" searchPlaceholder="搜索项目编码或名称" options={(projects.data ?? []).map((item) => ({ value: item.id, label: `${item.projectCode} · ${item.name}` }))} onValueChange={(value) => setDraft((current) => ({ ...current, projectId: value }))} /></label><label><span>捐赠方</span><SearchableSelect ariaLabel="筛选捐赠方" defaultValue={draft.donorId} placeholder="全部捐赠方" searchPlaceholder="搜索捐赠方" options={(donors.data ?? []).map((item) => ({ value: item.id, label: `${item.organizationCode} · ${item.name}` }))} onValueChange={(value) => setDraft((current) => ({ ...current, donorId: value }))} /></label><label><span>开具日期</span><span className="expert-filter-date-range"><DateInput aria-label="开具日期起始" defaultValue={draft.issuedFrom} onValueChange={(value) => setDraft((current) => ({ ...current, issuedFrom: value }))} /><em>至</em><DateInput aria-label="开具日期结束" defaultValue={draft.issuedTo} onValueChange={(value) => setDraft((current) => ({ ...current, issuedTo: value }))} /></span></label><label><span>状态</span><Select value={draft.status} onChange={(event) => setDraft((value) => ({ ...value, status: event.target.value }))}><option value="">全部状态</option><option value="NORMAL">正常</option><option value="VOID">已作废</option></Select></label><div className="expert-filter-actions"><button type="button" className="button ghost" onClick={() => setFiltersOpen(false)}>取消</button><button type="submit" className="button primary">应用筛选</button></div></form>}</div><span className="result-count">{query.data?.total ?? 0} 张票据</span></div>
+    <section className="invoice-summary-strip donation-summary-strip"><span><small>有效票据数</small><strong>{query.data?.summary.count ?? 0} 张</strong></span><i /><span><small>有效票据价税合计</small><strong>{formatMoney(query.data?.summary.amount)}</strong></span></section>
+    <div className="toolbar"><div className={`expert-filter-popover${filtersOpen ? ' open' : ''}`}><button type="button" className="expert-filter-trigger" onClick={() => { setDraft(filters); setFiltersOpen((value) => !value); }}><Search size={16} /><span><strong>{filterSummary || '搜索与筛选捐赠票据'}</strong><small>捐赠人、发票信息、日期和状态</small></span><SlidersHorizontal size={16} /></button>{filtersOpen && <form className="expert-filter-panel" onSubmit={applyFilters}><div className="expert-filter-panel-heading"><span><strong>筛选捐赠票据</strong><small>未选择的条件默认不限</small></span><button type="button" onClick={() => setDraft({ q: '', status: '', issuedFrom: '', issuedTo: '' })}><RotateCcw size={13} />清空条件</button></div><label><span>关键词</span><Input value={draft.q} onChange={(event) => setDraft((value) => ({ ...value, q: event.target.value }))} /></label><label><span>发票日期</span><span className="expert-filter-date-range"><DateInput aria-label="发票日期起始" defaultValue={draft.issuedFrom} onValueChange={(value) => setDraft((current) => ({ ...current, issuedFrom: value }))} /><em>至</em><DateInput aria-label="发票日期结束" defaultValue={draft.issuedTo} onValueChange={(value) => setDraft((current) => ({ ...current, issuedTo: value }))} /></span></label><label><span>状态</span><Select value={draft.status} onChange={(event) => setDraft((value) => ({ ...value, status: event.target.value }))}><option value="">全部状态</option><option value="NORMAL">正常</option><option value="VOID">已作废</option></Select></label><div className="expert-filter-actions"><button type="button" className="button ghost" onClick={() => setFiltersOpen(false)}>取消</button><button type="submit" className="button primary">应用筛选</button></div></form>}</div><span className="result-count">{query.data?.total ?? 0} 张票据</span></div>
     <section className="panel table-panel">{query.isLoading ? <LoadingState /> : query.error ? <ErrorState error={query.error} /> : <><DataTable tableId="donation-receipts" columns={columns} rows={query.data?.items ?? []} rowKey={(row) => row.id} /><Pagination page={page} total={query.data?.total ?? 0} onPageChange={setPage} /></>}</section>
-    <Modal open={creating || Boolean(editing)} onClose={closeEditor} title={editing ? '编辑捐赠票据' : '登记捐赠票据'} description="捐赠票据编号不可重复，保存后可继续补充 PDF 附件。" size="large"><form key={editing?.id ?? 'new'} className="form-grid" onSubmit={(event) => { event.preventDefault(); save.mutate({ body: formObject(event.currentTarget), attachments: files }); }}><Field label="关联项目"><SearchableSelect name="projectId" required ariaLabel="关联项目" defaultValue={editing?.projectId ?? ''} placeholder="请选择项目" searchPlaceholder="搜索项目编码或名称" options={(projects.data ?? []).map((item) => ({ value: item.id, label: `${item.projectCode} · ${item.name}` }))} /></Field><Field label="捐赠方"><SearchableSelect name="donorId" required ariaLabel="捐赠方" defaultValue={editing?.donorId ?? ''} placeholder="请选择捐赠方" searchPlaceholder="搜索支持方编号或名称" options={(donors.data ?? []).map((item) => ({ value: item.id, label: `${item.organizationCode} · ${item.name}` }))} /></Field><Field label="票据编号"><Input name="receiptNumber" required maxLength={64} defaultValue={editing?.receiptNumber ?? ''} /></Field><Field label="开具日期"><DateInput name="issuedOn" required aria-label="开具日期" defaultValue={editing?.issuedOn.slice(0, 10) ?? ''} /></Field><Field label="票据金额"><MoneyInput name="amount" required min="0.01" defaultValue={editing?.amount ?? ''} /></Field><Field label="备注"><Input name="remark" maxLength={500} defaultValue={editing?.remark ?? ''} /></Field><Field label="附件列表" span={2} hint="可选；仅支持 PDF，每次添加一份，最多 10 份；单个文件不超过 10MB。"><PdfAttachmentInput files={files} onFilesChange={setFiles} existingCount={editing?.attachments?.length ?? 0} />{editing && <LedgerAttachmentList objectType="DONATION_RECEIPT" objectId={editing.id} attachments={editing.attachments} canDelete onDeleted={(attachmentId) => setEditing((current) => current ? { ...current, attachments: current.attachments.filter((item) => item.id !== attachmentId) } : current)} />}</Field>{save.error && <p className="form-error span-2">{save.error.message}</p>}<div className="span-2"><FormActions pending={save.isPending} onCancel={closeEditor} submitLabel={editing ? '保存修改' : '保存票据'} /></div></form></Modal>
-    <ConfirmActionModal open={Boolean(voiding)} onClose={() => setVoiding(null)} onConfirm={() => voiding && voidReceipt.mutate(voiding.id)} pending={voidReceipt.isPending} error={voidReceipt.error} title="作废捐赠票据" description={voiding ? `确认作废票据“${voiding.receiptNumber}”？作废后保留历史记录，但不再计入统计。` : ''} confirmLabel="确认作废" />
+    <Modal open={creating || Boolean(editing)} onClose={closeEditor} title={editing ? '编辑捐赠票据' : '登记捐赠票据'} description="填写价税合计和税率后，金额与税额自动倒算。" size="large"><form key={editing?.id ?? 'new'} className="form-grid" onSubmit={submit}><Field label="捐赠人"><Input name="donorName" required defaultValue={editing?.donorName ?? ''} /></Field><Field label="手机号" hint={editing ? `留空保持原手机号（当前：${editing.phoneMasked || '未填写'}）` : undefined}><Input name="phone" required={!editing} /></Field><Field label="发票日期"><DateInput name="issuedOn" required aria-label="发票日期" defaultValue={editing?.issuedOn.slice(0, 10) ?? ''} /></Field><Field label="发票类型"><Input name="invoiceType" required defaultValue={editing?.invoiceType ?? ''} /></Field><Field label="开票平台"><Input name="invoicePlatform" required defaultValue={editing?.invoicePlatform ?? ''} /></Field><Field label="销售方名称"><Input name="sellerName" required defaultValue={editing?.sellerName ?? ''} /></Field><Field label="价税合计"><MoneyInput name="totalAmount" min="0" required value={totalAmount} onChange={(event) => setTotalAmount(event.target.value)} /></Field><Field label="税率" hint="按百分数填写，例如 6 表示 6%"><MoneyInput name="taxRate" min="0" max="100" step="0.01" required value={taxRate} onChange={(event) => setTaxRate(event.target.value)} /></Field><Field label="金额" hint="根据价税合计和税率自动倒算"><MoneyInput name="amountExcludingTax" min="0" required readOnly value={calculated.amountExcludingTax} /></Field><Field label="税额" hint="价税合计减去金额"><MoneyInput name="taxAmount" min="0" required readOnly value={calculated.taxAmount} /></Field><Field label="附件列表" span={2} hint="可选；仅支持 PDF，每次添加一份，最多 10 份；单个文件不超过 10MB。"><PdfAttachmentInput files={files} onFilesChange={setFiles} existingCount={editing?.attachments?.length ?? 0} />{editing && <LedgerAttachmentList objectType="DONATION_RECEIPT" objectId={editing.id} attachments={editing.attachments} canDelete onDeleted={(attachmentId) => setEditing((current) => current ? { ...current, attachments: current.attachments.filter((item) => item.id !== attachmentId) } : current)} />}</Field>{save.error && <p className="form-error span-2">{save.error.message}</p>}<div className="span-2"><FormActions pending={save.isPending} onCancel={closeEditor} submitLabel={editing ? '保存修改' : '保存票据'} /></div></form></Modal>
+    <ConfirmActionModal open={Boolean(voiding)} onClose={() => setVoiding(null)} onConfirm={() => voiding && voidReceipt.mutate(voiding.id)} pending={voidReceipt.isPending} error={voidReceipt.error} title="作废捐赠票据" description={voiding ? `确认作废“${voiding.donorName}”的捐赠票据？作废后保留历史记录，但不再计入统计。` : ''} confirmLabel="确认作废" />
   </div>;
+}
+
+export function calculateDonationAmounts(totalAmount: string, taxRatePercent: string) {
+  if (totalAmount.trim() === '' || taxRatePercent.trim() === '') return { amountExcludingTax: '', taxAmount: '' };
+  const total = Number(totalAmount);
+  const rate = Number(taxRatePercent) / 100;
+  if (!Number.isFinite(total) || !Number.isFinite(rate) || rate <= -1) return { amountExcludingTax: '', taxAmount: '' };
+  const amount = Math.round((total / (1 + rate) + Number.EPSILON) * 100) / 100;
+  const tax = Math.round((total - amount + Number.EPSILON) * 100) / 100;
+  return { amountExcludingTax: amount.toFixed(2), taxAmount: tax.toFixed(2) };
 }

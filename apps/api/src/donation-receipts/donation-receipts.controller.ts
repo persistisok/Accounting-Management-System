@@ -14,22 +14,22 @@ export class DonationReceiptsController {
 
   @Get()
   @RequirePermission('DONATION_RECEIPTS', 'VIEW')
-  list(@Query() query: DonationReceiptListQueryDto, @CurrentUser() user: AuthUser) { return this.receipts.list(query, user); }
+  list(@Query() query: DonationReceiptListQueryDto) { return this.receipts.list(query); }
 
   @Post()
   @Roles('SYSTEM_ADMIN', 'ADMIN', 'PM', 'EXTERNAL')
   @RequirePermission('DONATION_RECEIPTS', 'ENTRY')
-  create(@Body() dto: CreateDonationReceiptDto, @CurrentUser() user: AuthUser) { return this.receipts.create(dto, user.id, user); }
+  create(@Body() dto: CreateDonationReceiptDto, @CurrentUser() user: AuthUser) { return this.receipts.create(dto, user.id); }
 
   @Patch(':id')
   @Roles('SYSTEM_ADMIN', 'ADMIN', 'PM')
   @RequirePermission('DONATION_RECEIPTS', 'EDIT')
   update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateDonationReceiptDto, @CurrentUser() user: AuthUser) {
-    return this.receipts.update(id, dto, user.id, user);
+    return this.receipts.update(id, dto, user.id);
   }
 
   @Post(':id/void')
   @Roles('SYSTEM_ADMIN', 'ADMIN', 'PM')
   @RequirePermission('DONATION_RECEIPTS', 'EDIT')
-  void(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: AuthUser) { return this.receipts.void(id, user.id, user); }
+  void(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: AuthUser) { return this.receipts.void(id, user.id); }
 }

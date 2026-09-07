@@ -1,6 +1,6 @@
 import {
   BookOpenText, BriefcaseBusiness, Building2, ChartNoAxesCombined, ChevronLeft, FileSignature,
-  HandCoins, KeyRound, Landmark, LogOut, Menu, ReceiptText, ScrollText, Search, ShieldCheck, UserRoundCog, UsersRound, X,
+  KeyRound, Landmark, LogOut, Menu, ReceiptText, ScrollText, Search, ShieldCheck, UserRoundCog, UsersRound, X,
 } from 'lucide-react';
 import { useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
@@ -14,7 +14,7 @@ interface NavItem {
   label: string;
   icon: typeof BriefcaseBusiness;
   resource?: PermissionResource;
-  children?: Array<{ to: string; label: string }>;
+  children?: Array<{ to: string; label: string; resource: PermissionResource }>;
 }
 
 const groups: { label: string; items: NavItem[] }[] = [
@@ -25,26 +25,26 @@ const groups: { label: string; items: NavItem[] }[] = [
   { label: '业务台账', items: [
     { to: '/contracts', label: '合同台账', icon: FileSignature, resource: 'CONTRACTS' },
     { label: '银行日记账', icon: Landmark, resource: 'BANKING', children: [
-      { to: '/banking/support-income', label: '支持款收入' },
-      { to: '/banking/member-dues', label: '会费收入' },
-      { to: '/banking/execution-payment', label: '执行款支出' },
-      { to: '/banking/expert-fee', label: '专家费支出' },
+      { to: '/banking/support-income', label: '支持款收入', resource: 'BANKING' },
+      { to: '/banking/member-dues', label: '会费收入', resource: 'BANKING' },
+      { to: '/banking/execution-payment', label: '执行款支出', resource: 'BANKING' },
+      { to: '/banking/expert-fee', label: '专家费支出', resource: 'BANKING' },
     ] },
     { label: '发票台账', icon: ReceiptText, resource: 'INVOICES', children: [
-      { to: '/invoices/support-income', label: '支持款收入票据' },
-      { to: '/invoices/member-dues', label: '会费收入票据' },
-      { to: '/invoices/execution-payment', label: '执行款支出票据' },
-      { to: '/invoices/expert-fee', label: '专家费支出票据' },
+      { to: '/invoices/support-income', label: '支持款收入票据', resource: 'INVOICES' },
+      { to: '/invoices/member-dues', label: '会费收入票据', resource: 'INVOICES' },
+      { to: '/invoices/execution-payment', label: '执行款支出票据', resource: 'INVOICES' },
+      { to: '/invoices/expert-fee', label: '专家费支出票据', resource: 'INVOICES' },
+      { to: '/invoices/donation', label: '捐赠票据', resource: 'DONATION_RECEIPTS' },
     ] },
-    { to: '/donation-receipts', label: '捐赠票据台账', icon: HandCoins, resource: 'DONATION_RECEIPTS' },
   ] },
   { label: '基础资料', items: [
     { to: '/supporters', label: '支持方库', icon: Building2, resource: 'SUPPORTERS' },
     { to: '/executors', label: '执行方库', icon: BookOpenText, resource: 'EXECUTORS' },
     { to: '/experts', label: '专家库', icon: ShieldCheck, resource: 'EXPERTS' },
     { label: '会员库', icon: UsersRound, resource: 'MEMBERS', children: [
-      { to: '/members/committees', label: '专委会' },
-      { to: '/members/list', label: '会员' },
+      { to: '/members/committees', label: '专委会', resource: 'MEMBERS' },
+      { to: '/members/list', label: '会员', resource: 'MEMBERS' },
     ] },
   ] },
 ];
@@ -63,7 +63,9 @@ export function AppShell() {
     ]
     : [];
   const businessGroups = groups
-    .map((group) => ({ ...group, items: group.items.filter((item) => item.resource && hasPermission(user, item.resource, 'VIEW')) }))
+    .map((group) => ({ ...group, items: group.items
+      .map((item) => item.children ? { ...item, children: item.children.filter((child) => hasPermission(user, child.resource, 'VIEW')) } : item)
+      .filter((item) => item.children ? item.children.length > 0 : item.resource && hasPermission(user, item.resource, 'VIEW')) }))
     .filter((group) => group.items.length);
   const visibleGroups = systemItems.length ? [...businessGroups, { label: '系统管理', items: systemItems }] : businessGroups;
 

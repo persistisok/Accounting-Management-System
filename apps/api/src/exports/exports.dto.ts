@@ -41,8 +41,6 @@ export class ExportQueryDto {
   @IsOptional() @IsUUID() bankMembershipId?: string;
   @IsOptional() @IsDateString() transactionFrom?: string;
   @IsOptional() @IsDateString() transactionTo?: string;
-  @IsOptional() @IsUUID() donationProjectId?: string;
-  @IsOptional() @IsUUID() donationDonorId?: string;
   @IsOptional() @IsIn(['NORMAL', 'VOID']) donationStatus?: 'NORMAL' | 'VOID';
   @IsOptional() @IsDateString() donationIssuedFrom?: string;
   @IsOptional() @IsDateString() donationIssuedTo?: string;

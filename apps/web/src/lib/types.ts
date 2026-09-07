@@ -120,7 +120,6 @@ export interface Project {
   contracts?: Contract[];
   allocations?: BankAllocation[];
   invoices?: Invoice[];
-  donationReceipts?: DonationReceipt[];
 }
 
 export interface ProjectFilterOptions {
@@ -186,15 +185,17 @@ export interface Contract {
 
 export interface DonationReceipt {
   id: string;
-  receiptNumber: string;
-  projectId: string;
-  donorId: string;
+  donorName: string;
+  phoneMasked?: string;
   issuedOn: string;
-  amount: string;
-  remark?: string;
+  invoiceType: string;
+  invoicePlatform: string;
+  sellerName: string;
+  totalAmount: string;
+  taxRate: string;
+  amountExcludingTax: string;
+  taxAmount: string;
   status: 'NORMAL' | 'VOID';
-  project: Pick<Project, 'id' | 'projectCode' | 'name'>;
-  donor: Pick<Organization, 'id' | 'organizationCode' | 'name'>;
   attachments: LedgerAttachment[];
 }
 
@@ -212,6 +213,7 @@ export interface AuditLog {
   requestId?: string;
   ipAddress?: string;
   occurredAt: string;
+  objectDisplayName?: string;
   actor?: Pick<User, 'id' | 'displayName' | 'username'> | null;
 }
 

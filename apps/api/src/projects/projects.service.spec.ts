@@ -156,7 +156,7 @@ describe('PM project scope', () => {
 describe('project deletion', () => {
   const emptyProject = {
     id: 'project-1', projectCode: 'SL260701ABCDE', name: '待删除项目', archiveItems: [],
-    contracts: [], allocations: [], invoices: [], donationReceipts: [], _count: { candidates: 0 },
+    contracts: [], allocations: [], invoices: [], _count: { candidates: 0 },
   };
 
   it('deletes an empty project and records the operation', async () => {
@@ -166,7 +166,6 @@ describe('project deletion', () => {
       contract: { deleteMany: vi.fn(async () => ({ count: 0 })) },
       bankAllocation: { deleteMany: vi.fn(async () => ({ count: 0 })) },
       invoice: { deleteMany: vi.fn(async () => ({ count: 0 })) },
-      donationReceipt: { deleteMany: vi.fn(async () => ({ count: 0 })) },
       $transaction: vi.fn(async (operations: Promise<unknown>[]) => Promise.all(operations)),
     };
     const audit = { record: vi.fn() };
@@ -184,7 +183,6 @@ describe('project deletion', () => {
       contracts: [{ id: 'contract-1', status: ContractStatus.VOID }],
       allocations: [{ id: 'allocation-1', status: 'REVERSED' }],
       invoices: [{ id: 'invoice-1', status: InvoiceStatus.VOID }],
-      donationReceipts: [{ id: 'donation-1', status: 'VOID' }],
     };
     const prisma = {
       project: { findUnique: vi.fn(async () => voidedProject), delete: vi.fn(async () => voidedProject) },
@@ -192,7 +190,6 @@ describe('project deletion', () => {
       contract: { deleteMany: vi.fn(async () => ({ count: 1 })) },
       bankAllocation: { deleteMany: vi.fn(async () => ({ count: 1 })) },
       invoice: { deleteMany: vi.fn(async () => ({ count: 1 })) },
-      donationReceipt: { deleteMany: vi.fn(async () => ({ count: 1 })) },
       $transaction: vi.fn(async (operations: Promise<unknown>[]) => Promise.all(operations)),
     };
     const attachments = { removeForObjects: vi.fn(async () => 2) };
@@ -202,7 +199,6 @@ describe('project deletion', () => {
     expect(attachments.removeForObjects).toHaveBeenCalledWith([
       { objectType: 'CONTRACT', objectId: 'contract-1' },
       { objectType: 'INVOICE', objectId: 'invoice-1' },
-      { objectType: 'DONATION_RECEIPT', objectId: 'donation-1' },
     ], 'system-admin-1');
   });
 

@@ -110,7 +110,7 @@ export class LedgerAttachmentsService {
         : objectType === 'CONTRACT'
           ? await this.prisma.contract.findFirst({ where: { id: objectId, project: { pmUserId } }, select: { id: true } })
         : objectType === 'DONATION_RECEIPT'
-          ? await this.prisma.donationReceipt.findFirst({ where: { id: objectId, project: { pmUserId } }, select: { id: true } })
+          ? await this.prisma.donationReceipt.findUnique({ where: { id: objectId }, select: { id: true } })
         : objectType === 'INVOICE'
             ? await this.prisma.invoice.findFirst({ where: { id: objectId, project: { pmUserId } }, select: { id: true } })
             : objectType === 'MEMBERSHIP'
@@ -128,7 +128,7 @@ export class LedgerAttachmentsService {
         : objectType === 'CONTRACT'
           ? await this.prisma.contract.findFirst({ where: { id: objectId, projectId: { in: projectIds } }, select: { id: true } })
         : objectType === 'DONATION_RECEIPT'
-          ? await this.prisma.donationReceipt.findFirst({ where: { id: objectId, projectId: { in: projectIds } }, select: { id: true } })
+          ? await this.prisma.donationReceipt.findUnique({ where: { id: objectId }, select: { id: true } })
         : objectType === 'INVOICE'
             ? await this.prisma.invoice.findFirst({ where: { id: objectId, projectId: { in: projectIds } }, select: { id: true } })
             : objectType === 'BANK_TRANSACTION'

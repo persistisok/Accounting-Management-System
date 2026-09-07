@@ -13,9 +13,9 @@ import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { hasPermission } from '../lib/permissions';
 import { formatDate, formatMoney, formatProjectPeriod, statusLabels } from '../lib/format';
-import type { BankAllocation, Contract, DonationReceipt, Invoice, Project } from '../lib/types';
+import type { BankAllocation, Contract, Invoice, Project } from '../lib/types';
 
-type DetailTab = 'overview' | 'contracts' | 'banking' | 'invoices' | 'donationReceipts' | 'expertFees' | 'archive';
+type DetailTab = 'overview' | 'contracts' | 'banking' | 'invoices' | 'expertFees' | 'archive';
 
 export function ProjectDetailPage() {
   const { id = '' } = useParams();
@@ -26,7 +26,6 @@ export function ProjectDetailPage() {
   const canUpload = hasPermission(user, 'PROJECTS', 'ENTRY');
   const canViewBanking = hasPermission(user, 'BANKING', 'VIEW');
   const canImportExpertFees = hasPermission(user, 'BANKING', 'ENTRY');
-  const canViewDonationReceipts = hasPermission(user, 'DONATION_RECEIPTS', 'VIEW');
   const project = useQuery({ queryKey: ['project', id], queryFn: () => api.get<Project>(`/projects/${id}`), enabled: Boolean(id) });
   const upload = useMutation({
     mutationFn: () => uploadLedgerAttachments('PROJECT', id, attachmentFiles),
@@ -39,7 +38,6 @@ export function ProjectDetailPage() {
   const tabs: { key: DetailTab; label: string; count?: number }[] = [
     { key: 'overview', label: '项目概览' }, { key: 'contracts', label: '合同', count: data.contracts?.length },
     { key: 'banking', label: '流水', count: data.allocations?.length }, { key: 'invoices', label: '发票', count: data.invoices?.length },
-    ...(canViewDonationReceipts ? [{ key: 'donationReceipts' as const, label: '捐赠票据', count: data.donationReceipts?.length }] : []),
     ...(canViewBanking ? [{ key: 'expertFees' as const, label: '专家劳务费', count: expertFeeCount }] : []),
     { key: 'archive', label: '归档清单' },
   ];
@@ -62,7 +60,6 @@ export function ProjectDetailPage() {
       {tab === 'contracts' && <DataTable columns={contractColumns} rows={data.contracts ?? []} rowKey={(row) => row.id} />}
       {tab === 'banking' && <DataTable columns={allocationColumns} rows={data.allocations ?? []} rowKey={(row) => row.id} />}
       {tab === 'invoices' && <DataTable columns={invoiceColumns} rows={data.invoices ?? []} rowKey={(row) => row.id} />}
-      {tab === 'donationReceipts' && <DataTable columns={donationReceiptColumns} rows={data.donationReceipts ?? []} rowKey={(row) => row.id} />}
       {tab === 'expertFees' && <ProjectExpertFees project={data} canImport={canImportExpertFees && data.archiveStatus !== 'ARCHIVED'} />}
       {tab === 'archive' && <ProjectArchiveChecklist projectId={data.id} archived={data.archiveStatus === 'ARCHIVED'} />}
     </section>
@@ -92,13 +89,5 @@ const invoiceColumns: TableColumn<Invoice>[] = [
   { key: 'buyer', label: '相对方', render: (row) => row.buyerName },
   { key: 'date', label: '发票日期', render: (row) => formatDate(row.issuedOn) },
   { key: 'amount', label: '价税合计', className: 'number', render: (row) => formatMoney(row.totalAmount) },
-  { key: 'status', label: '状态', render: (row) => <StatusChip value={row.status} /> },
-];
-const donationReceiptColumns: TableColumn<DonationReceipt>[] = [
-  { key: 'number', label: '票据编号', render: (row) => <span className="mono key-cell">{row.receiptNumber}</span> },
-  { key: 'donor', label: '捐赠方', render: (row) => row.donor.name },
-  { key: 'date', label: '开具日期', render: (row) => formatDate(row.issuedOn) },
-  { key: 'amount', label: '票据金额', className: 'number', render: (row) => formatMoney(row.amount) },
-  { key: 'remark', label: '备注', render: (row) => row.remark || '—' },
   { key: 'status', label: '状态', render: (row) => <StatusChip value={row.status} /> },
 ];

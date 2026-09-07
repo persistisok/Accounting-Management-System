@@ -307,33 +307,34 @@ export class ExportsService {
       throw new BadRequestException('捐赠票据日期结束时间不能早于起始时间');
     }
     const where: Prisma.DonationReceiptWhereInput = {
-      ...(query.donationProjectId ? { projectId: query.donationProjectId } : {}),
-      ...(query.donationDonorId ? { donorId: query.donationDonorId } : {}),
       ...(query.donationStatus ? { status: query.donationStatus } : {}),
       ...((query.donationIssuedFrom || query.donationIssuedTo) ? { issuedOn: {
         ...(query.donationIssuedFrom ? { gte: new Date(query.donationIssuedFrom) } : {}),
         ...(query.donationIssuedTo ? { lte: new Date(query.donationIssuedTo) } : {}),
       } } : {}),
       ...(query.q ? { OR: [
-        { receiptNumber: { contains: query.q, mode: 'insensitive' } },
-        { project: { OR: [{ projectCode: { contains: query.q, mode: 'insensitive' } }, { name: { contains: query.q, mode: 'insensitive' } }] } },
-        { donor: { name: { contains: query.q, mode: 'insensitive' } } },
+        { donorName: { contains: query.q, mode: 'insensitive' } },
+        { invoiceType: { contains: query.q, mode: 'insensitive' } },
+        { invoicePlatform: { contains: query.q, mode: 'insensitive' } },
+        { sellerName: { contains: query.q, mode: 'insensitive' } },
       ] } : {}),
     };
     await this.assertExportSize(this.prisma.donationReceipt.count({ where }));
-    const items = await this.prisma.donationReceipt.findMany({ where, include: { project: true, donor: true }, orderBy: { issuedOn: 'desc' } });
+    const items = await this.prisma.donationReceipt.findMany({ where, orderBy: { issuedOn: 'desc' } });
     const attachments = await this.attachmentNames('DONATION_RECEIPT', items.map((item) => item.id));
     const rows = items.map((item): ExportRow => ({
-      receiptNumber: item.receiptNumber, projectCode: item.project.projectCode, projectName: item.project.name,
-      donorName: item.donor.name, issuedOn: item.issuedOn, amount: Number(item.amount),
-      status: item.status === 'NORMAL' ? '正常' : '已作废', remark: item.remark ?? '', attachments: attachments[item.id] ?? '',
+      donorName: item.donorName, phone: this.sensitive.decrypt(item.phoneEncrypted) ?? '', issuedOn: item.issuedOn,
+      invoiceType: item.invoiceType, invoicePlatform: item.invoicePlatform, sellerName: item.sellerName,
+      totalAmount: Number(item.totalAmount), taxRate: Number(item.taxRate), amountExcludingTax: Number(item.amountExcludingTax), taxAmount: Number(item.taxAmount),
+      status: item.status === 'NORMAL' ? '正常' : '已作废', attachments: attachments[item.id] ?? '',
     }));
     this.addSheet(workbook, '捐赠票据台账', [
-      textColumn('receiptNumber', '票据编号', 22), textColumn('projectCode', '项目编码', 20), textColumn('projectName', '项目名称', 28),
-      textColumn('donorName', '捐赠方', 28), dateColumn('issuedOn', '开具日期'), moneyColumn('amount', '票据金额'),
-      textColumn('status', '状态', 12), textColumn('remark', '备注', 32), textColumn('attachments', '附件列表', 40),
+      textColumn('donorName', '捐赠人', 24), textColumn('phone', '手机号', 18), dateColumn('issuedOn', '发票日期'),
+      textColumn('invoiceType', '发票类型', 16), textColumn('invoicePlatform', '开票平台', 20), textColumn('sellerName', '销售方名称', 28),
+      moneyColumn('totalAmount', '价税合计'), percentColumn('taxRate', '税率'), moneyColumn('amountExcludingTax', '金额'), moneyColumn('taxAmount', '税额'),
+      textColumn('status', '状态', 12), textColumn('attachments', '附件列表', 40),
     ], rows);
-    return { title: '捐赠票据台账', rowCount: rows.length };
+    return { title: '捐赠票据台账', rowCount: rows.length, sensitiveFields: ['手机号'] };
   }
 
   private async experts(workbook: ExcelJS.Workbook, query: ExportQueryDto) {
