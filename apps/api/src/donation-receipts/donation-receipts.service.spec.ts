@@ -36,9 +36,9 @@ describe('DonationReceiptsService', () => {
     const prisma = {
       donationReceipt: { findMany: vi.fn(), count: vi.fn(), aggregate: vi.fn() },
       attachment: { findMany: vi.fn(async () => []) },
-      $transaction: vi.fn(async () => [[{ id: 'receipt-id' }], 3, { _sum: { amount: '3200.50' } }]),
+      $transaction: vi.fn(async () => [[{ id: 'receipt-id' }], 4, 3, { _sum: { amount: '3200.50' } }]),
     };
     const service = new DonationReceiptsService(prisma as never, { record: vi.fn() } as never);
-    await expect(service.list({ page: 1, pageSize: 20, q: 'D-001' }, admin as never)).resolves.toMatchObject({ total: 3, summary: { count: 3, amount: '3200.50' } });
+    await expect(service.list({ page: 1, pageSize: 20, q: 'D-001' }, admin as never)).resolves.toMatchObject({ total: 4, summary: { count: 3, amount: '3200.50' } });
   });
 });

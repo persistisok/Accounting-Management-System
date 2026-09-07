@@ -35,19 +35,21 @@ export class DonationReceiptsService {
         { donor: { name: { contains: query.q, mode: 'insensitive' } } },
       ] } : {}),
     };
-    const [items, total, amount] = await this.prisma.$transaction([
+    const effectiveWhere: Prisma.DonationReceiptWhereInput = { ...where, status: DonationReceiptStatus.NORMAL };
+    const [items, total, effectiveCount, amount] = await this.prisma.$transaction([
       this.prisma.donationReceipt.findMany({
         where, include: relations, orderBy: [{ issuedOn: 'desc' }, { createdAt: 'desc' }],
         skip: (query.page - 1) * query.pageSize, take: query.pageSize,
       }),
       this.prisma.donationReceipt.count({ where }),
-      this.prisma.donationReceipt.aggregate({ where, _sum: { amount: true } }),
+      this.prisma.donationReceipt.count({ where: effectiveWhere }),
+      this.prisma.donationReceipt.aggregate({ where: effectiveWhere, _sum: { amount: true } }),
     ]);
     const attachments = await attachmentMap(this.prisma, 'DONATION_RECEIPT', items.map((item) => item.id));
     return {
       items: items.map((item) => ({ ...item, attachments: attachments[item.id] ?? [] })),
       total,
-      summary: { amount: Number(amount._sum.amount ?? 0).toFixed(2), count: total },
+      summary: { amount: Number(amount._sum.amount ?? 0).toFixed(2), count: effectiveCount },
     };
   }
 
