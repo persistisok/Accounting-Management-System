@@ -1,4 +1,5 @@
-import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Query, StreamableFile, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
@@ -17,6 +18,25 @@ export class MembershipsController {
   @RequirePermission('MEMBERS', 'VIEW')
   list(@Query() query: MembershipListQueryDto, @CurrentUser() user: AuthUser) { return this.memberships.list(query, user); }
 
+  @Get('import-template')
+  @Roles('SYSTEM_ADMIN', 'ADMIN', 'PM', 'EXTERNAL')
+  @RequirePermission('MEMBERS', 'ENTRY')
+  importTemplate() {
+    return new StreamableFile(this.memberships.importTemplate(), {
+      type: 'text/csv; charset=utf-8',
+      disposition: `attachment; filename*=UTF-8''${encodeURIComponent('会员库导入模板.csv')}`,
+    });
+  }
+
+  @Post('import')
+  @Roles('SYSTEM_ADMIN', 'ADMIN', 'PM', 'EXTERNAL')
+  @RequirePermission('MEMBERS', 'ENTRY')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 2 * 1024 * 1024, files: 1 } }))
+  importMembers(@UploadedFile() file: { buffer: Buffer; originalname: string } | undefined, @CurrentUser() user: AuthUser) {
+    if (!file) throw new BadRequestException('请选择需要导入的 CSV 文件');
+    return this.memberships.importMemberships(file, user);
+  }
+
   @Get(':id/dues')
   @RequirePermission('MEMBERS', 'VIEW')
   memberDues(@Param('id', ParseUUIDPipe) id: string, @Query() query: ListQueryDto, @CurrentUser() user: AuthUser) {
@@ -24,8 +44,8 @@ export class MembershipsController {
   }
 
   @Post()
-  @Roles('SYSTEM_ADMIN', 'ADMIN', 'PM')
-  @RequirePermission('MEMBERS', 'EDIT')
+  @Roles('SYSTEM_ADMIN', 'ADMIN', 'PM', 'EXTERNAL')
+  @RequirePermission('MEMBERS', 'ENTRY')
   create(@Body() dto: CreateMembershipDto, @CurrentUser() user: AuthUser) { return this.memberships.createMembership(dto, user.id, user); }
 
   @Patch(':id')
@@ -50,8 +70,8 @@ export class MembershipsController {
   committeeOptions(@CurrentUser() user: AuthUser) { return this.memberships.committeeOptions(user); }
 
   @Post('committees')
-  @Roles('SYSTEM_ADMIN', 'ADMIN', 'PM')
-  @RequirePermission('MEMBERS', 'EDIT')
+  @Roles('SYSTEM_ADMIN', 'ADMIN', 'PM', 'EXTERNAL')
+  @RequirePermission('MEMBERS', 'ENTRY')
   createCommittee(@Body() dto: CreateCommitteeDto, @CurrentUser() user: AuthUser) {
     return this.memberships.createCommittee(dto, user.id, user);
   }
@@ -77,8 +97,8 @@ export class MembershipsController {
   paymentOptions(@CurrentUser() user: AuthUser) { return this.memberships.paymentOptions(user); }
 
   @Post('dues')
-  @Roles('SYSTEM_ADMIN', 'ADMIN', 'PM')
-  @RequirePermission('MEMBERS', 'EDIT')
+  @Roles('SYSTEM_ADMIN', 'ADMIN', 'PM', 'EXTERNAL')
+  @RequirePermission('MEMBERS', 'ENTRY')
   createDue(@Body() dto: CreateMemberDueDto, @CurrentUser() user: AuthUser) {
     return this.memberships.createDue(dto, user.id, user);
   }

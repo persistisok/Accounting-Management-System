@@ -22,7 +22,7 @@ export interface SearchableOption {
 }
 
 export function SearchableSelect({ name, options, defaultValue = '', required = false, disabled = false, placeholder = '请选择', searchPlaceholder = '输入关键词搜索', ariaLabel, onValueChange }: {
-  name: string;
+  name?: string;
   options: SearchableOption[];
   defaultValue?: string;
   required?: boolean;
@@ -42,6 +42,10 @@ export function SearchableSelect({ name, options, defaultValue = '', required = 
   useEffect(() => {
     if (!open) setQuery(selected?.label ?? '');
   }, [open, selected?.label]);
+
+  useEffect(() => {
+    setValue(defaultValue);
+  }, [defaultValue]);
 
   function choose(option: SearchableOption) {
     setValue(option.value);
@@ -90,9 +94,46 @@ export function SearchableSelect({ name, options, defaultValue = '', required = 
   </div>;
 }
 
-type DateInputProps = Omit<InputHTMLAttributes<HTMLInputElement>, 'type' | 'value' | 'onChange'>;
+export function SearchableMultiSelect({ options, values, onValuesChange, placeholder = '搜索并选择', required = false }: {
+  options: SearchableOption[];
+  values: string[];
+  onValuesChange: (values: string[]) => void;
+  placeholder?: string;
+  required?: boolean;
+}) {
+  const [query, setQuery] = useState('');
+  const [open, setOpen] = useState(false);
+  const selected = options.filter((option) => values.includes(option.value));
+  const normalizedQuery = query.trim().toLocaleLowerCase('zh-CN');
+  const filtered = options.filter((option) => `${option.label} ${option.searchText ?? ''}`.toLocaleLowerCase('zh-CN').includes(normalizedQuery));
 
-export function DateInput({ className, defaultValue = '', disabled, required, name, min, max, 'aria-label': ariaLabel, ...props }: DateInputProps) {
+  function toggle(value: string) {
+    onValuesChange(values.includes(value) ? values.filter((item) => item !== value) : [...values, value]);
+  }
+
+  return <div className={`searchable-multi${open ? ' open' : ''}`} onBlur={(event) => {
+    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOpen(false);
+  }}>
+    <div className="searchable-multi-values">
+      {selected.map((option) => <button key={option.value} type="button" onClick={() => toggle(option.value)} title="移除项目">{option.label}<span>×</span></button>)}
+      <input
+        className="control"
+        value={query}
+        required={required && values.length === 0}
+        placeholder={selected.length ? '继续搜索项目' : placeholder}
+        onFocus={() => setOpen(true)}
+        onChange={(event) => { setQuery(event.target.value); setOpen(true); }}
+      />
+    </div>
+    {open && <div className="searchable-menu" role="listbox">
+      {filtered.length ? filtered.map((option) => <button key={option.value} type="button" role="option" aria-selected={values.includes(option.value)} onMouseDown={(event) => event.preventDefault()} onClick={() => toggle(option.value)}><span>{option.label}</span>{values.includes(option.value) && <Check size={14} />}</button>) : <p>没有匹配项目</p>}
+    </div>}
+  </div>;
+}
+
+type DateInputProps = Omit<InputHTMLAttributes<HTMLInputElement>, 'type' | 'value' | 'onChange'> & { onValueChange?: (value: string) => void };
+
+export function DateInput({ className, defaultValue = '', disabled, required, name, min, max, 'aria-label': ariaLabel, onValueChange, ...props }: DateInputProps) {
   const [value, setValue] = useState(String(defaultValue));
   const inputRef = useRef<HTMLInputElement>(null);
   const displayValue = /^\d{4}-\d{2}-\d{2}$/.test(value)
@@ -135,7 +176,7 @@ export function DateInput({ className, defaultValue = '', disabled, required, na
       disabled={disabled}
       tabIndex={-1}
       aria-hidden="true"
-      onChange={(event) => setValue(event.target.value)}
+      onChange={(event) => { setValue(event.target.value); onValueChange?.(event.target.value); }}
     />
   </span>;
 }

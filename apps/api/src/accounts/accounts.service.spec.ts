@@ -8,12 +8,14 @@ const account = {
   id: '00000000-0000-0000-0000-000000000001',
   username: 'visitor',
   passwordHash: 'hash',
-  displayName: '访客用户',
-  role: 'GUEST',
+  displayName: '外部用户',
+  role: 'EXTERNAL',
   projectManagerId: null,
   status: 'ACTIVE',
   createdAt: new Date(),
   updatedAt: new Date(),
+  permissions: [],
+  projectScopes: [],
 };
 
 describe('AccountsService', () => {
@@ -21,6 +23,7 @@ describe('AccountsService', () => {
   const prisma = {
     user: { findFirst: vi.fn(), findUnique: vi.fn(), create: vi.fn(), update: vi.fn() },
     projectManager: { findFirst: vi.fn() },
+    project: { count: vi.fn() },
   };
   let service: AccountsService;
 
@@ -30,15 +33,31 @@ describe('AccountsService', () => {
     prisma.user.findFirst.mockResolvedValue(null);
   });
 
-  it('creates a guest with a name and no PM binding', async () => {
+  it('creates an external account with specified projects and no PM binding', async () => {
+    const projectId = '00000000-0000-4000-8000-000000000088';
+    prisma.project.count.mockResolvedValue(1);
     prisma.user.create.mockResolvedValue({ ...account, projectManager: null });
 
     await service.create({
-      username: ' visitor ', password: 'Password123!', displayName: ' 访客用户 ', role: 'GUEST', projectManagerId: '00000000-0000-0000-0000-000000000099',
+      username: ' visitor ', password: 'Password123!', displayName: ' 外部用户 ', role: 'EXTERNAL', projectManagerId: '00000000-0000-0000-0000-000000000099', projectIds: [projectId],
     }, 'admin-id');
 
     expect(prisma.user.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({
-      username: 'visitor', displayName: '访客用户', role: 'GUEST', projectManagerId: null, passwordHash: 'hashed:Password123!',
+      username: 'visitor', displayName: '外部用户', role: 'EXTERNAL', projectManagerId: null, passwordHash: 'hashed:Password123!',
+      projectScopes: { create: [{ projectId }] },
+    }) }));
+  });
+
+  it('creates an external account without a project scope', async () => {
+    prisma.user.create.mockResolvedValue({ ...account, projectManager: null });
+
+    await service.create({
+      username: 'visitor', password: 'Password123!', displayName: '外部用户', role: 'EXTERNAL', projectIds: [],
+    }, 'admin-id');
+
+    expect(prisma.project.count).not.toHaveBeenCalled();
+    expect(prisma.user.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({
+      role: 'EXTERNAL', projectManagerId: null, projectScopes: { create: [] },
     }) }));
   });
 
@@ -98,7 +117,7 @@ describe('AccountsService', () => {
 
   it('releases the PM binding when an account is deactivated', async () => {
     const pmId = '00000000-0000-0000-0000-000000000099';
-    prisma.user.findUnique.mockResolvedValue({ ...account, role: 'PM', projectManagerId: pmId, permissions: [] });
+    prisma.user.findUnique.mockResolvedValue({ ...account, role: 'PM', projectManagerId: pmId });
     prisma.projectManager.findFirst.mockResolvedValue({ id: pmId });
     prisma.user.update.mockResolvedValue({ ...account, role: 'PM', status: 'INACTIVE', projectManagerId: null, projectManager: null });
 
@@ -110,7 +129,7 @@ describe('AccountsService', () => {
   });
 
   it('releases the PM binding through the quick deactivate action', async () => {
-    prisma.user.findUnique.mockResolvedValue({ ...account, role: 'PM', projectManagerId: '00000000-0000-0000-0000-000000000099', permissions: [] });
+    prisma.user.findUnique.mockResolvedValue({ ...account, role: 'PM', projectManagerId: '00000000-0000-0000-0000-000000000099' });
     prisma.user.update.mockResolvedValue({ ...account, status: 'INACTIVE', projectManagerId: null, projectManager: null });
 
     await service.remove(account.id, 'system-admin-id');

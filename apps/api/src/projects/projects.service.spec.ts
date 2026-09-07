@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ArchiveStatus, InvoiceDirection, ProjectReviewState, ProjectStatus } from '@prisma/client';
+import { ArchiveStatus, ContractStatus, InvoiceDirection, InvoiceStatus, ProjectReviewState, ProjectStatus } from '@prisma/client';
 import { roundMoney } from '../common/money';
 import { ProjectPeriodUnit } from './projects.dto';
-import { buildProjectWhere, formatProjectCode, ProjectsService, projectScopeFor, randomProjectCodeSuffix, toPeriodMonths, validateArchiveRequest, validateStatusRequest } from './projects.service';
+import { buildProjectWhere, formatProjectCode, ProjectsService, projectScopeFor, randomProjectCodeSuffix, toPeriodMonths, validateArchiveChecklistCompletion, validateArchiveRequest, validateStatusRequest } from './projects.service';
 
 describe('money summaries', () => {
   it('keeps two decimal places for financial API values', () => {
@@ -13,18 +13,23 @@ describe('money summaries', () => {
   it('summarizes issued and received invoices separately', async () => {
     const prisma = {
       contract: { findMany: async () => [] },
-      bankAllocation: { findMany: async () => [] },
+      bankAllocation: { findMany: async () => [
+        { projectId: 'project-1', category: 'MEMBER_DUE', allocatedAmount: '80.00' },
+      ] },
       invoice: { findMany: async () => [
-        { projectId: 'project-1', direction: InvoiceDirection.ISSUED, kind: 'BLUE', totalAmount: '100.00' },
-        { projectId: 'project-1', direction: InvoiceDirection.RECEIVED, kind: 'BLUE', totalAmount: '60.00' },
+        { projectId: 'project-1', category: 'SUPPORT_RECEIPT_ISSUED', direction: InvoiceDirection.ISSUED, kind: 'BLUE', totalAmount: '100.00' },
+        { projectId: 'project-1', category: 'EXECUTION_PAYMENT_RECEIVED', direction: InvoiceDirection.RECEIVED, kind: 'BLUE', totalAmount: '60.00' },
+        { projectId: 'project-1', category: 'MEMBER_DUE_ISSUED', direction: InvoiceDirection.ISSUED, kind: 'BLUE', totalAmount: '30.00' },
       ] },
     };
     const invoiceFindMany = vi.spyOn(prisma.invoice, 'findMany');
-    const service = new ProjectsService(prisma as never, { record: vi.fn() } as never);
+    const service = new ProjectsService(prisma as never, { record: vi.fn() } as never, {} as never);
 
     await expect(service.summary('project-1')).resolves.toMatchObject({
       invoicedAmount: '100.00',
       receivedInvoiceAmount: '60.00',
+      memberDueReceivedAmount: '80.00',
+      memberDueInvoicedAmount: '30.00',
     });
     expect(invoiceFindMany).toHaveBeenCalledWith(expect.objectContaining({
       select: expect.objectContaining({ direction: true }),
@@ -63,7 +68,7 @@ describe('project code formatting', () => {
       projectManager: { findFirst: vi.fn(async () => ({ id: 'pm-1', displayName: '林知夏' })) },
       $transaction: vi.fn(async (callback: (client: typeof transaction) => unknown) => callback(transaction)),
     };
-    const service = new ProjectsService(prisma as never, { record: vi.fn() } as never);
+    const service = new ProjectsService(prisma as never, { record: vi.fn() } as never, {} as never);
 
     const result = await service.create({
       platform: '示例平台', platformAbbreviation: 'sl', publishedOn: '2026-07-15', name: '示例项目',
@@ -87,12 +92,14 @@ describe('project overview filters', () => {
       platform: '公益平台',
       nature: '公益支持',
       projectType: '培训项目',
+      pmUserId: '00000000-0000-4000-8000-000000000001',
       publishedFrom: '2026-01-01',
       publishedTo: '2026-12-31',
     })).toEqual({
       platform: '公益平台',
       nature: '公益支持',
       projectType: '培训项目',
+      pmUserId: '00000000-0000-4000-8000-000000000001',
       publishedOn: {
         gte: new Date('2026-01-01'),
         lte: new Date('2026-12-31'),
@@ -108,12 +115,108 @@ describe('project overview filters', () => {
       publishedTo: '2026-08-09',
     })).toThrow('立项开始日期不能晚于结束日期');
   });
+
+  it('returns totals for all filtered records instead of only the current page', async () => {
+    const prisma = {
+      project: {
+        findMany: vi.fn(async () => []),
+        count: vi.fn(async () => 23),
+        aggregate: vi.fn(async () => ({ _sum: { approvedAmount: '12345.67' } })),
+      },
+      contract: { aggregate: vi.fn(async () => ({ _sum: { amount: '10000.00' } })) },
+      bankAllocation: { aggregate: vi.fn(async () => ({ _sum: { allocatedAmount: '8000.50' } })) },
+      $transaction: vi.fn(async (operations: Promise<unknown>[]) => Promise.all(operations)),
+    };
+    const service = new ProjectsService(prisma as never, { record: vi.fn() } as never, {} as never);
+
+    const result = await service.list({ page: 2, pageSize: 20, platform: '公益平台' }, {
+      id: 'admin-1', username: 'admin', displayName: '管理员', role: 'SYSTEM_ADMIN',
+      projectManagerId: null, projectIds: [], permissions: [],
+    });
+
+    expect(result).toMatchObject({
+      total: 23,
+      totals: { approvedAmount: '12345.67', supportAgreementAmount: '10000.00', receivedAmount: '8000.50' },
+    });
+    expect(prisma.project.aggregate).toHaveBeenCalledWith(expect.objectContaining({ where: { platform: '公益平台' } }));
+    expect(prisma.contract.aggregate).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ project: { platform: '公益平台' } }),
+    }));
+  });
 });
 
 describe('PM project scope', () => {
   it('limits PM accounts to projects assigned to the bound PM', () => {
-    expect(projectScopeFor({ role: 'PM', projectManagerId: 'pm-1' })).toEqual({ pmUserId: 'pm-1' });
-    expect(projectScopeFor({ role: 'ADMIN', projectManagerId: 'pm-1' })).toEqual({});
+    expect(projectScopeFor({ role: 'PM', projectManagerId: 'pm-1', projectIds: [] })).toEqual({ pmUserId: 'pm-1' });
+    expect(projectScopeFor({ role: 'ADMIN', projectManagerId: 'pm-1', projectIds: [] })).toEqual({});
+    expect(projectScopeFor({ role: 'EXTERNAL', projectManagerId: null, projectIds: ['project-1'] })).toEqual({ id: { in: ['project-1'] } });
+  });
+});
+
+describe('project deletion', () => {
+  const emptyProject = {
+    id: 'project-1', projectCode: 'SL260701ABCDE', name: '待删除项目', archiveItems: [],
+    contracts: [], allocations: [], invoices: [], donationReceipts: [], _count: { candidates: 0 },
+  };
+
+  it('deletes an empty project and records the operation', async () => {
+    const prisma = {
+      project: { findUnique: vi.fn(async () => emptyProject), delete: vi.fn(async () => emptyProject) },
+      attachment: { count: vi.fn(async () => 0) },
+      contract: { deleteMany: vi.fn(async () => ({ count: 0 })) },
+      bankAllocation: { deleteMany: vi.fn(async () => ({ count: 0 })) },
+      invoice: { deleteMany: vi.fn(async () => ({ count: 0 })) },
+      donationReceipt: { deleteMany: vi.fn(async () => ({ count: 0 })) },
+      $transaction: vi.fn(async (operations: Promise<unknown>[]) => Promise.all(operations)),
+    };
+    const audit = { record: vi.fn() };
+    const attachments = { removeForObjects: vi.fn(async () => 0) };
+    const service = new ProjectsService(prisma as never, audit as never, attachments as never);
+
+    await expect(service.remove('project-1', 'system-admin-1')).resolves.toMatchObject({ id: 'project-1' });
+    expect(prisma.project.delete).toHaveBeenCalledWith({ where: { id: 'project-1' } });
+    expect(audit.record).toHaveBeenCalledWith(expect.objectContaining({ action: 'DELETE', objectType: 'PROJECT' }));
+  });
+
+  it('deletes voided business records with the project', async () => {
+    const voidedProject = {
+      ...emptyProject,
+      contracts: [{ id: 'contract-1', status: ContractStatus.VOID }],
+      allocations: [{ id: 'allocation-1', status: 'REVERSED' }],
+      invoices: [{ id: 'invoice-1', status: InvoiceStatus.VOID }],
+      donationReceipts: [{ id: 'donation-1', status: 'VOID' }],
+    };
+    const prisma = {
+      project: { findUnique: vi.fn(async () => voidedProject), delete: vi.fn(async () => voidedProject) },
+      attachment: { count: vi.fn(async () => 0) },
+      contract: { deleteMany: vi.fn(async () => ({ count: 1 })) },
+      bankAllocation: { deleteMany: vi.fn(async () => ({ count: 1 })) },
+      invoice: { deleteMany: vi.fn(async () => ({ count: 1 })) },
+      donationReceipt: { deleteMany: vi.fn(async () => ({ count: 1 })) },
+      $transaction: vi.fn(async (operations: Promise<unknown>[]) => Promise.all(operations)),
+    };
+    const attachments = { removeForObjects: vi.fn(async () => 2) };
+    const service = new ProjectsService(prisma as never, { record: vi.fn() } as never, attachments as never);
+
+    await expect(service.remove('project-1', 'system-admin-1')).resolves.toMatchObject({ id: 'project-1' });
+    expect(attachments.removeForObjects).toHaveBeenCalledWith([
+      { objectType: 'CONTRACT', objectId: 'contract-1' },
+      { objectType: 'INVOICE', objectId: 'invoice-1' },
+      { objectType: 'DONATION_RECEIPT', objectId: 'donation-1' },
+    ], 'system-admin-1');
+  });
+
+  it('rejects deletion when the project has active business records', async () => {
+    const prisma = {
+      project: { findUnique: vi.fn(async () => ({ ...emptyProject, contracts: [{ id: 'contract-1', status: ContractStatus.SIGNED }] })), delete: vi.fn() },
+      attachment: { count: vi.fn(async () => 0) },
+    };
+    const attachments = { removeForObjects: vi.fn() };
+    const service = new ProjectsService(prisma as never, { record: vi.fn() } as never, attachments as never);
+
+    await expect(service.remove('project-1', 'system-admin-1')).rejects.toThrow('不能删除');
+    expect(prisma.project.delete).not.toHaveBeenCalled();
+    expect(attachments.removeForObjects).not.toHaveBeenCalled();
   });
 });
 
@@ -134,5 +237,10 @@ describe('project status and archive review workflow', () => {
     expect(() => validateArchiveRequest(ProjectStatus.ACTIVE, ArchiveStatus.UNARCHIVED, null)).toThrow('结项或中止后');
     expect(() => validateArchiveRequest(ProjectStatus.CLOSED, ArchiveStatus.ARCHIVED, null)).toThrow('已归档');
     expect(() => validateArchiveRequest(ProjectStatus.CLOSED, ArchiveStatus.UNARCHIVED, ProjectReviewState.PENDING)).toThrow('待复核');
+  });
+
+  it('requires all non-optional checklist items to pass before final archive review', () => {
+    expect(() => validateArchiveChecklistCompletion(29)).not.toThrow();
+    expect(() => validateArchiveChecklistCompletion(28)).toThrow('28/29');
   });
 });

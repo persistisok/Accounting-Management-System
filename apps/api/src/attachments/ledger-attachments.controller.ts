@@ -23,7 +23,7 @@ export class LedgerAttachmentsController {
   }
 
   @Post(':objectType/:objectId')
-  @Roles('SYSTEM_ADMIN', 'ADMIN', 'PM')
+  @Roles('SYSTEM_ADMIN', 'ADMIN', 'PM', 'EXTERNAL')
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 10 * 1024 * 1024, files: 1 } }))
   async upload(
     @Param('objectType') objectType: string,
@@ -32,12 +32,12 @@ export class LedgerAttachmentsController {
     @CurrentUser() user: AuthUser,
   ) {
     if (!file) throw new BadRequestException('请选择需要上传的 PDF 附件');
-    await this.attachments.authorize(objectType, objectId, user, 'EDIT');
+    await this.attachments.authorize(objectType, objectId, user, 'ENTRY');
     return this.attachments.upload(objectType, objectId, file, user.id);
   }
 
   @Post(':objectType/:objectId/multipart/init')
-  @Roles('SYSTEM_ADMIN', 'ADMIN', 'PM')
+  @Roles('SYSTEM_ADMIN', 'ADMIN', 'PM', 'EXTERNAL')
   async initMultipart(
     @Param('objectType') objectType: string,
     @Param('objectId', ParseUUIDPipe) objectId: string,
@@ -45,12 +45,12 @@ export class LedgerAttachmentsController {
     @CurrentUser() user: AuthUser,
   ) {
     this.assertProjectAttachment(objectType);
-    await this.attachments.authorize(objectType, objectId, user, 'EDIT');
+    await this.attachments.authorize(objectType, objectId, user, 'ENTRY');
     return this.attachments.initProjectMultipart(objectId, body.fileName, body.sizeBytes, body.headerBase64, user.id);
   }
 
   @Post(':objectType/:objectId/multipart/part-url')
-  @Roles('SYSTEM_ADMIN', 'ADMIN', 'PM')
+  @Roles('SYSTEM_ADMIN', 'ADMIN', 'PM', 'EXTERNAL')
   async multipartPartUrl(
     @Param('objectType') objectType: string,
     @Param('objectId', ParseUUIDPipe) objectId: string,
@@ -58,12 +58,12 @@ export class LedgerAttachmentsController {
     @CurrentUser() user: AuthUser,
   ) {
     this.assertProjectAttachment(objectType);
-    await this.attachments.authorize(objectType, objectId, user, 'EDIT');
+    await this.attachments.authorize(objectType, objectId, user, 'ENTRY');
     return this.attachments.createProjectPartUrl(objectId, body.token, body.partNumber, user.id);
   }
 
   @Post(':objectType/:objectId/multipart/complete')
-  @Roles('SYSTEM_ADMIN', 'ADMIN', 'PM')
+  @Roles('SYSTEM_ADMIN', 'ADMIN', 'PM', 'EXTERNAL')
   async completeMultipart(
     @Param('objectType') objectType: string,
     @Param('objectId', ParseUUIDPipe) objectId: string,
@@ -71,12 +71,12 @@ export class LedgerAttachmentsController {
     @CurrentUser() user: AuthUser,
   ) {
     this.assertProjectAttachment(objectType);
-    await this.attachments.authorize(objectType, objectId, user, 'EDIT');
+    await this.attachments.authorize(objectType, objectId, user, 'ENTRY');
     return this.attachments.completeProjectMultipart(objectId, body.token, body.parts, user.id);
   }
 
   @Post(':objectType/:objectId/multipart/abort')
-  @Roles('SYSTEM_ADMIN', 'ADMIN', 'PM')
+  @Roles('SYSTEM_ADMIN', 'ADMIN', 'PM', 'EXTERNAL')
   async abortMultipart(
     @Param('objectType') objectType: string,
     @Param('objectId', ParseUUIDPipe) objectId: string,
@@ -84,7 +84,7 @@ export class LedgerAttachmentsController {
     @CurrentUser() user: AuthUser,
   ) {
     this.assertProjectAttachment(objectType);
-    await this.attachments.authorize(objectType, objectId, user, 'EDIT');
+    await this.attachments.authorize(objectType, objectId, user, 'ENTRY');
     return this.attachments.abortProjectMultipart(objectId, body.token, user.id);
   }
 

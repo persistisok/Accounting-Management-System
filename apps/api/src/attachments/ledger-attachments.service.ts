@@ -18,7 +18,7 @@ export interface LedgerAttachmentFile {
   buffer: Buffer;
 }
 
-const objectTypes = new Set<LedgerAttachmentObjectType>(['PROJECT', 'CONTRACT', 'BANK_TRANSACTION', 'INVOICE', 'MEMBERSHIP']);
+const objectTypes = new Set<LedgerAttachmentObjectType>(['PROJECT', 'PROJECT_ARCHIVE_ITEM', 'CONTRACT', 'BANK_TRANSACTION', 'INVOICE', 'DONATION_RECEIPT', 'MEMBERSHIP']);
 const OSS_PROVIDER = 'OSS';
 const PROJECT_ATTACHMENT_LIMIT = 5 * 1024 * 1024 * 1024;
 const MULTIPART_PART_SIZE = 64 * 1024 * 1024;
@@ -84,13 +84,19 @@ export class LedgerAttachmentsService {
     const objectType = this.parseObjectType(rawObjectType);
     const resources: Record<LedgerAttachmentObjectType, PermissionResourceValue> = {
       PROJECT: 'PROJECTS',
+      PROJECT_ARCHIVE_ITEM: 'PROJECTS',
       CONTRACT: 'CONTRACTS',
       BANK_TRANSACTION: 'BANKING',
       INVOICE: 'INVOICES',
+      DONATION_RECEIPT: 'DONATION_RECEIPTS',
       MEMBERSHIP: 'MEMBERS',
     };
     assertPermission(user, resources[objectType], level);
-    if (objectType === 'PROJECT' && level === 'EDIT') {
+    if (objectType === 'PROJECT_ARCHIVE_ITEM' && (level === 'ENTRY' || level === 'EDIT')
+      && user.role !== 'PM' && user.role !== 'SYSTEM_ADMIN') {
+      throw new BadRequestException('只有项目 PM 可以修改归档材料');
+    }
+    if (objectType === 'PROJECT' && (level === 'ENTRY' || level === 'EDIT')) {
       const project = await this.prisma.project.findUnique({ where: { id: objectId }, select: { archiveStatus: true } });
       if (!project) throw new NotFoundException('项目不存在');
       if (project.archiveStatus === 'ARCHIVED') throw new BadRequestException('已归档项目不能修改附件');
@@ -99,9 +105,13 @@ export class LedgerAttachmentsService {
       const pmUserId = user.projectManagerId ?? '__unbound_pm__';
       const owned = objectType === 'PROJECT'
         ? await this.prisma.project.findFirst({ where: { id: objectId, pmUserId }, select: { id: true, archiveStatus: true } })
+        : objectType === 'PROJECT_ARCHIVE_ITEM'
+          ? await this.prisma.projectArchiveItem.findFirst({ where: { id: objectId, project: { pmUserId } }, select: { id: true } })
         : objectType === 'CONTRACT'
           ? await this.prisma.contract.findFirst({ where: { id: objectId, project: { pmUserId } }, select: { id: true } })
-          : objectType === 'INVOICE'
+        : objectType === 'DONATION_RECEIPT'
+          ? await this.prisma.donationReceipt.findFirst({ where: { id: objectId, project: { pmUserId } }, select: { id: true } })
+        : objectType === 'INVOICE'
             ? await this.prisma.invoice.findFirst({ where: { id: objectId, project: { pmUserId } }, select: { id: true } })
             : objectType === 'MEMBERSHIP'
               ? await this.prisma.membership.findFirst({ where: { id: objectId, pmUserId }, select: { id: true } })
@@ -109,6 +119,22 @@ export class LedgerAttachmentsService {
               { project: { pmUserId } }, { expertProfile: { formOwnerId: pmUserId } }, { memberDue: { membership: { pmUserId } } },
             ] } } }, select: { id: true } });
       if (!owned) throw new NotFoundException('业务记录不存在或不属于当前 PM');
+    } else if (user.role === 'EXTERNAL') {
+      const projectIds = user.projectIds;
+      const owned = objectType === 'PROJECT'
+        ? await this.prisma.project.findFirst({ where: { id: objectId, AND: { id: { in: projectIds } } }, select: { id: true } })
+        : objectType === 'PROJECT_ARCHIVE_ITEM'
+          ? await this.prisma.projectArchiveItem.findFirst({ where: { id: objectId, projectId: { in: projectIds } }, select: { id: true } })
+        : objectType === 'CONTRACT'
+          ? await this.prisma.contract.findFirst({ where: { id: objectId, projectId: { in: projectIds } }, select: { id: true } })
+        : objectType === 'DONATION_RECEIPT'
+          ? await this.prisma.donationReceipt.findFirst({ where: { id: objectId, projectId: { in: projectIds } }, select: { id: true } })
+        : objectType === 'INVOICE'
+            ? await this.prisma.invoice.findFirst({ where: { id: objectId, projectId: { in: projectIds } }, select: { id: true } })
+            : objectType === 'BANK_TRANSACTION'
+              ? await this.prisma.bankTransaction.findFirst({ where: { id: objectId, allocations: { some: { projectId: { in: projectIds } } } }, select: { id: true } })
+              : await this.prisma.membership.findFirst({ where: { id: objectId }, select: { id: true } });
+      if (!owned) throw new NotFoundException('业务记录不存在或不在当前账号授权范围内');
     }
   }
 
@@ -324,6 +350,21 @@ export class LedgerAttachmentsService {
     return { id: attachment.id };
   }
 
+  async removeForObjects(
+    targets: Array<{ objectType: LedgerAttachmentObjectType; objectId: string }>,
+    actorUserId: string,
+  ) {
+    if (!targets.length) return 0;
+    const attachments = await this.prisma.attachment.findMany({
+      where: { OR: targets },
+      select: { id: true, objectType: true, objectId: true },
+    });
+    for (const attachment of attachments) {
+      await this.remove(attachment.objectType, attachment.objectId, attachment.id, actorUserId);
+    }
+    return attachments.length;
+  }
+
   private parseObjectType(value: string): LedgerAttachmentObjectType {
     if (!objectTypes.has(value as LedgerAttachmentObjectType)) throw new BadRequestException('不支持该业务对象的附件');
     return value as LedgerAttachmentObjectType;
@@ -430,8 +471,12 @@ export class LedgerAttachmentsService {
   private async assertObjectExists(objectType: LedgerAttachmentObjectType, objectId: string) {
     const exists = objectType === 'PROJECT'
       ? await this.prisma.project.findUnique({ where: { id: objectId }, select: { id: true } })
+      : objectType === 'PROJECT_ARCHIVE_ITEM'
+        ? await this.prisma.projectArchiveItem.findUnique({ where: { id: objectId }, select: { id: true } })
       : objectType === 'CONTRACT'
         ? await this.prisma.contract.findUnique({ where: { id: objectId }, select: { id: true } })
+        : objectType === 'DONATION_RECEIPT'
+          ? await this.prisma.donationReceipt.findUnique({ where: { id: objectId }, select: { id: true } })
         : objectType === 'BANK_TRANSACTION'
           ? await this.prisma.bankTransaction.findUnique({ where: { id: objectId }, select: { id: true } })
           : objectType === 'INVOICE'

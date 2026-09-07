@@ -8,15 +8,16 @@ import { SensitiveDataService } from '../common/sensitive-data.service';
 import { normalizeImportDate, parseCsv } from '../common/csv-import';
 import { PrismaService } from '../prisma.service';
 import type { AuthUser } from '../common/current-user.decorator';
-import { BankAccountListQueryDto, CreateBankAccountDto, CreateTransactionDto, TransactionListQueryDto, UpdateBankAccountDto, UpdateTransactionDto } from './banking.dto';
+import { BankAccountListQueryDto, CreateBankAccountDto, CreateTransactionDto, ProjectExpertFeeImportDto, TransactionListQueryDto, UpdateBankAccountDto, UpdateTransactionDto } from './banking.dto';
 
 const incomeCategories: AllocationCategory[] = ['SUPPORT_RECEIPT', 'MEMBER_DUE'];
 const expenseCategories: AllocationCategory[] = ['EXECUTION_PAYMENT', 'EXPERT_FEE'];
 const supportedCategories: AllocationCategory[] = [...incomeCategories, ...expenseCategories];
 const importHeaders = ['本方银行账号', '收支方向', '资金分类', '关联项目编码', '专家姓名', '专家身份证号', '专委会编码', '会员姓名', '交易日期', '对方账户名称', '对方银行名称', '对方银行账号', '金额', '性质'] as const;
+const projectExpertFeeHeaders = ['专家姓名', '身份证号', '支付金额'] as const;
 const expertReportHeaders = ['姓名', '身份证号', '支付金额', '是否入库', '职称', '身份证号', '手机号', '开户行', '银行卡号', '个税'] as const;
 const importCategoryMap: Record<string, AllocationCategory> = {
-  支持款收入: 'SUPPORT_RECEIPT', 会员会费收入: 'MEMBER_DUE', 执行款支出: 'EXECUTION_PAYMENT', 专家费支出: 'EXPERT_FEE',
+  支持款收入: 'SUPPORT_RECEIPT', 会费收入: 'MEMBER_DUE', 会员会费收入: 'MEMBER_DUE', 执行款支出: 'EXECUTION_PAYMENT', 专家费支出: 'EXPERT_FEE',
 };
 
 export interface BankingImportFile {
@@ -159,14 +160,28 @@ export class BankingService {
   }
 
   async list(query: TransactionListQueryDto, user?: AuthUser) {
+    if (query.transactionFrom && query.transactionTo && query.transactionFrom > query.transactionTo) {
+      throw new BadRequestException('交易日期结束时间不能早于起始时间');
+    }
     const where: Prisma.BankTransactionWhereInput = {
       ...(query.direction ? { direction: query.direction } : {}),
       ...(query.matchStatus ? { matchStatus: query.matchStatus as MatchStatus } : {}),
+      ...(query.transactionStatus ? { settlementApplicable: query.transactionStatus === 'ACTIVE' } : {}),
+      ...((query.transactionFrom || query.transactionTo) ? { transactionAt: {
+        ...(query.transactionFrom ? { gte: new Date(query.transactionFrom) } : {}),
+        ...(query.transactionTo ? { lte: new Date(query.transactionTo) } : {}),
+      } } : {}),
+      ...((query.category || query.projectId || query.expertProfileId || query.membershipId) ? { AND: [{ allocations: { some: {
+        ...(query.category ? { category: query.category } : {}),
+        ...(query.projectId ? { projectId: query.projectId } : {}),
+        ...(query.expertProfileId ? { expertProfileId: query.expertProfileId } : {}),
+        ...(query.membershipId ? { memberDue: { membershipId: query.membershipId } } : {}),
+      } } }] } : {}),
       ...(user?.role === 'PM' ? { allocations: { some: { OR: [
         { project: { pmUserId: user.projectManagerId ?? '__unbound_pm__' } },
         { expertProfile: { formOwnerId: user.projectManagerId ?? '__unbound_pm__' } },
         { memberDue: { membership: { pmUserId: user.projectManagerId ?? '__unbound_pm__' } } },
-      ] } } } : {}),
+      ] } } } : user?.role === 'EXTERNAL' ? { allocations: { some: { projectId: { in: user.projectIds } } } } : {}),
       ...(query.q ? { OR: [
         { transactionNo: { contains: query.q, mode: 'insensitive' } },
         { counterpartyName: { contains: query.q, mode: 'insensitive' } },
@@ -210,9 +225,79 @@ export class BankingService {
     return Buffer.from(`\uFEFF${importHeaders.join(',')}\r\n`, 'utf8');
   }
 
+  projectExpertFeeImportTemplate() {
+    return Buffer.from(`\uFEFF${projectExpertFeeHeaders.join(',')}\r\n`, 'utf8');
+  }
+
+  async importProjectExpertFees(
+    projectId: string,
+    file: BankingImportFile,
+    dto: ProjectExpertFeeImportDto,
+    user: AuthUser,
+  ): Promise<BankingImportResult> {
+    this.validateImportFile(file);
+    await this.requireActiveBankAccount(dto.bankAccountId);
+    const rows = parseCsv(file.buffer.toString('utf8').replace(/^\uFEFF/, ''));
+    if (!rows.length) throw new BadRequestException('导入文件为空');
+    const headers = rows[0]!.map((value) => value.trim());
+    const missingHeaders = projectExpertFeeHeaders.filter((header) => !headers.includes(header));
+    if (missingHeaders.length) throw new BadRequestException(`导入模板缺少列：${missingHeaders.join('、')}`);
+    const dataRows = rows.slice(1).filter((row) => row.some((value) => value.trim()));
+    if (!dataRows.length) throw new BadRequestException('导入文件没有业务数据');
+    if (dataRows.length > 1000) throw new BadRequestException('单次最多导入 1000 行');
+
+    const errors: Array<{ row: number; message: string }> = [];
+    const expertRows: ExpertImportMatch[] = [];
+    let successCount = 0;
+    for (let index = 0; index < dataRows.length; index += 1) {
+      const rowNumber = index + 2;
+      const source = Object.fromEntries(headers.map((header, column) => [header, dataRows[index]![column]?.trim() ?? '']));
+      const raw = {
+        专家姓名: source['专家姓名'] ?? '',
+        专家身份证号: source['身份证号'] ?? '',
+        金额: source['支付金额'] ?? '',
+      };
+      try {
+        const expertMatch = await this.resolveImportExpert(raw, user);
+        expertRows.push(expertMatch);
+        if (!expertMatch.expertId || expertMatch.eligibleError) {
+          throw new BadRequestException(expertMatch.eligibleError ?? '未按姓名和身份证号匹配到专家');
+        }
+        const transaction: CreateTransactionDto = {
+          bankAccountId: dto.bankAccountId,
+          projectId,
+          expertProfileId: expertMatch.expertId,
+          category: 'EXPERT_FEE',
+          transactionAt: dto.transactionDate,
+          counterpartyName: expertMatch.name,
+          counterpartyBankName: expertMatch.bankName,
+          counterpartyAccountNumber: expertMatch.bankAccount,
+          direction: 'OUT',
+          amount: expertMatch.amount,
+          nature: '专家劳务费',
+        };
+        if (!/^\d+(?:\.\d{1,2})?$/.test(transaction.amount) || Number(transaction.amount) <= 0) {
+          throw new BadRequestException('支付金额必须为大于零且最多两位小数的数字');
+        }
+        const rowHash = createHash('sha256').update(JSON.stringify({ ...transaction, source: 'PROJECT_EXPERT_FEE' })).digest('hex');
+        await this.createTransaction(transaction, user.id, user, {
+          rowHash,
+          rawData: {
+            ...raw,
+            专家身份证号: this.sensitive.maskId(raw.专家身份证号) ?? '',
+          },
+        });
+        successCount += 1;
+      } catch (error) {
+        const duplicate = error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
+        errors.push({ row: rowNumber, message: duplicate ? '该专家劳务费已导入，请勿重复导入' : errorMessage(error) });
+      }
+    }
+    return this.buildExpertImportResult(dataRows.length, successCount, errors, expertRows, user);
+  }
+
   async importTransactions(file: BankingImportFile, user: AuthUser): Promise<BankingImportResult> {
-    if (extname(file.originalname).toLowerCase() !== '.csv') throw new BadRequestException('导入文件必须是 CSV 格式');
-    if (file.size <= 0 || file.size > 2 * 1024 * 1024) throw new BadRequestException('导入文件大小必须在 2MB 以内');
+    this.validateImportFile(file);
     const rows = parseCsv(file.buffer.toString('utf8').replace(/^\uFEFF/, ''));
     if (!rows.length) throw new BadRequestException('导入文件为空');
     const headers = rows[0]!.map((value) => value.trim());
@@ -240,26 +325,40 @@ export class BankingService {
         errors.push({ row: rowNumber, message: duplicate ? '该流水已导入，请勿重复导入' : errorMessage(error) });
       }
     }
-    const result: BankingImportResult = { total: dataRows.length, successCount, failureCount: errors.length, errors };
-    if (expertRows.length) {
-      const report = this.expertImportReport(expertRows);
-      result.expertReport = {
-        fileName: `专家费导入匹配及个税_${new Date().toISOString().slice(0, 10)}.csv`,
-        contentBase64: report.toString('base64'),
+    return this.buildExpertImportResult(dataRows.length, successCount, errors, expertRows, user);
+  }
+
+  private validateImportFile(file: BankingImportFile) {
+    if (extname(file.originalname).toLowerCase() !== '.csv') throw new BadRequestException('导入文件必须是 CSV 格式');
+    if (file.size <= 0 || file.size > 2 * 1024 * 1024) throw new BadRequestException('导入文件大小必须在 2MB 以内');
+  }
+
+  private async buildExpertImportResult(
+    total: number,
+    successCount: number,
+    errors: Array<{ row: number; message: string }>,
+    expertRows: ExpertImportMatch[],
+    user: AuthUser,
+  ): Promise<BankingImportResult> {
+    const result: BankingImportResult = { total, successCount, failureCount: errors.length, errors };
+    if (!expertRows.length) return result;
+    const report = this.expertImportReport(expertRows);
+    result.expertReport = {
+      fileName: `专家费导入匹配及个税_${new Date().toISOString().slice(0, 10)}.csv`,
+      contentBase64: report.toString('base64'),
+      rowCount: expertRows.length,
+    };
+    await this.audit.record({
+      actorUserId: user.id,
+      action: 'EXPORT_SENSITIVE',
+      objectType: 'BANK_EXPERT_REPORT',
+      objectId: user.id,
+      afterData: {
         rowCount: expertRows.length,
-      };
-      await this.audit.record({
-        actorUserId: user.id,
-        action: 'EXPORT_SENSITIVE',
-        objectType: 'BANK_EXPERT_REPORT',
-        objectId: user.id,
-        afterData: {
-          rowCount: expertRows.length,
-          matchedExpertIds: [...new Set(expertRows.flatMap((row) => row.expertId ? [row.expertId] : []))],
-          fields: ['professionalTitle', 'idNumber', 'phone', 'bankName', 'bankAccount', 'individualIncomeTax'],
-        },
-      });
-    }
+        matchedExpertIds: [...new Set(expertRows.flatMap((row) => row.expertId ? [row.expertId] : []))],
+        fields: ['professionalTitle', 'idNumber', 'phone', 'bankName', 'bankAccount', 'individualIncomeTax'],
+      },
+    });
     return result;
   }
 
@@ -321,10 +420,15 @@ export class BankingService {
     const category = importCategoryMap[value('资金分类')];
     if (!category) throw new BadRequestException('资金分类填写不正确');
     const projectCode = value('关联项目编码');
-    const project = category === 'MEMBER_DUE' ? null : await this.prisma.project.findFirst({
-      where: { projectCode, status: 'ACTIVE', ...(user.role === 'PM' ? { pmUserId: user.projectManagerId ?? '__unbound_pm__' } : {}) }, select: { id: true },
-    });
-    if (category !== 'MEMBER_DUE' && !project) throw new BadRequestException('关联项目编码不存在、已结束或不属于当前 PM');
+    const project = projectCode ? await this.prisma.project.findFirst({
+      where: {
+        projectCode,
+        status: 'ACTIVE',
+        ...(user.role === 'PM' ? { pmUserId: user.projectManagerId ?? '__unbound_pm__' } : user.role === 'EXTERNAL' ? { id: { in: user.projectIds } } : {}),
+      }, select: { id: true },
+    }) : null;
+    if (projectCode && !project) throw new BadRequestException('关联项目编码不存在、已结束或不属于当前账号');
+    if (category !== 'MEMBER_DUE' && !project) throw new BadRequestException('关联项目编码不能为空');
 
     let expertProfileId: string | undefined;
     if (category === 'EXPERT_FEE') {
@@ -460,7 +564,7 @@ export class BankingService {
     const currentAllocation = before.allocations[0];
     const category = dto.category ?? currentAllocation?.category;
     if (!category) throw new BadRequestException('请选择资金分类');
-    const projectId = category === 'MEMBER_DUE' ? undefined : dto.projectId ?? currentAllocation?.projectId ?? undefined;
+    const projectId = dto.projectId ?? currentAllocation?.projectId ?? undefined;
     const expertProfileId = category === 'EXPERT_FEE' ? dto.expertProfileId ?? currentAllocation?.expertProfileId ?? undefined : undefined;
     const membershipId = category === 'MEMBER_DUE' ? dto.membershipId ?? currentAllocation?.memberDue?.membershipId ?? undefined : undefined;
     this.validateCategory(nextDirection, category);
@@ -585,13 +689,17 @@ export class BankingService {
 
   private async validateAssociation(category: AllocationCategory, projectId?: string, expertProfileId?: string, membershipId?: string, user?: AuthUser) {
     if (category === 'MEMBER_DUE') {
-      if (projectId) throw new BadRequestException('会员会费收入不能关联项目');
+      if (user?.role === 'EXTERNAL') throw new BadRequestException('第三方外部账号不能登记会费收入流水');
       if (!membershipId) throw new BadRequestException('请选择缴纳会费的会员');
-      if (expertProfileId) throw new BadRequestException('会员会费收入不能关联专家');
+      if (expertProfileId) throw new BadRequestException('会费收入不能关联专家');
       await this.requireActiveMembership(membershipId);
+      if (projectId) await this.requireActiveProject(projectId);
       if (user?.role === 'PM') {
         const membership = await this.prisma.membership.findFirst({ where: { id: membershipId, pmUserId: user.projectManagerId ?? '__unbound_pm__' }, select: { id: true } });
-        if (!membership) throw new NotFoundException('关联业务数据不存在或不属于当前 PM');
+        const project = projectId
+          ? await this.prisma.project.findFirst({ where: { id: projectId, pmUserId: user.projectManagerId ?? '__unbound_pm__' }, select: { id: true } })
+          : true;
+        if (!membership || !project) throw new NotFoundException('关联业务数据不存在或不属于当前 PM');
       }
       return;
     }
@@ -611,10 +719,20 @@ export class BankingService {
         ? await this.prisma.expertProfile.findFirst({ where: { id: expertProfileId, formOwnerId: pmUserId }, select: { id: true } })
         : true;
       if (!project || !expert) throw new NotFoundException('关联业务数据不存在或不属于当前 PM');
+    } else if (user?.role === 'EXTERNAL') {
+      if (!user.projectIds.includes(projectId)) throw new NotFoundException('关联项目不在当前账号授权范围内');
     }
   }
 
   private async assertTransactionScope(id: string, user?: AuthUser) {
+    if (user?.role === 'EXTERNAL') {
+      const transaction = await this.prisma.bankTransaction.findFirst({
+        where: { id, allocations: { some: { projectId: { in: user.projectIds } } } },
+        select: { id: true },
+      });
+      if (!transaction) throw new NotFoundException('银行流水不存在或不在当前账号授权范围内');
+      return;
+    }
     if (user?.role !== 'PM') return;
     const pmUserId = user.projectManagerId ?? '__unbound_pm__';
     const transaction = await this.prisma.bankTransaction.findFirst({ where: { id, allocations: { some: { OR: [
@@ -650,6 +768,7 @@ export class BankingService {
 
   private async allocateMemberPayment(tx: Prisma.TransactionClient, input: {
     bankTransactionId: string;
+    projectId?: string;
     membershipId?: string;
     category: AllocationCategory;
     amount: number;
@@ -683,6 +802,7 @@ export class BankingService {
       await tx.bankAllocation.create({
         data: {
           bankTransactionId: input.bankTransactionId,
+          projectId: input.projectId,
           memberDueId: allocation.dueId,
           category: input.category,
           allocatedAmount: allocation.amount.toFixed(2),
@@ -694,7 +814,7 @@ export class BankingService {
   }
 
   private validateCategory(direction: 'IN' | 'OUT', category: AllocationCategory) {
-    if (!supportedCategories.includes(category)) throw new BadRequestException('资金分类仅支持支持款收入、会员会费收入、执行款支出和专家费支出');
+    if (!supportedCategories.includes(category)) throw new BadRequestException('资金分类仅支持支持款收入、会费收入、执行款支出和专家费支出');
     if (direction === 'IN' && expenseCategories.includes(category)) throw new BadRequestException('收入流水不能选择支出资金分类');
     if (direction === 'OUT' && incomeCategories.includes(category)) throw new BadRequestException('支出流水不能选择收入资金分类');
   }

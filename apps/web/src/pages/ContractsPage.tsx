@@ -22,6 +22,7 @@ import type { Contract, ListResponse, Organization, Project } from '../lib/types
 export function ContractsPage() {
   const { user } = useAuth();
   const canEdit = hasPermission(user, 'CONTRACTS', 'EDIT');
+  const canCreate = hasPermission(user, 'CONTRACTS', 'ENTRY');
   const [q, setQ] = useState('');
   const [page, setPage] = useState(1);
   const [modal, setModal] = useState(false);
@@ -64,10 +65,10 @@ export function ContractsPage() {
   if (canEdit) columns.push({ key: 'action', label: '', render: (row) => <span className="row-actions"><button className="table-action" disabled={row.status === 'VOID' || row.status === 'TERMINATED'} onClick={() => { setContractType(row.contractType as 'SUPPORT' | 'EXECUTION'); setAttachmentFiles([]); setNotice(''); setEditing(row); }}><Pencil size={14} />编辑</button>{row.status !== 'VOID' && <button className="table-action danger" onClick={() => setVoiding(row)}><Trash2 size={14} />作废</button>}</span> });
   function submit(event: FormEvent<HTMLFormElement>) { event.preventDefault(); save.mutate({ body: formObject(event.currentTarget), files: attachmentFiles }); }
   return <div className="page-enter">
-    <PageHeader eyebrow="业务台账 / 合同" title="合同台账" description="支持协议计入项目应收，执行协议计入项目应付执行款。" action={(user?.role === 'SYSTEM_ADMIN' || canEdit) ? <div className="button-group">{user?.role === 'SYSTEM_ADMIN' && <LedgerExportButton dataset="contracts" fileName="合同台账" filters={{ q }} />}{canEdit && <button className="button primary" onClick={() => { setContractType('SUPPORT'); setAttachmentFiles([]); setNotice(''); setModal(true); }}><Plus size={17} />登记合同</button>}</div> : undefined} />
+    <PageHeader eyebrow="业务台账 / 合同" title="合同台账" description="支持协议计入项目应收，执行协议计入项目应付执行款。" action={(user?.role === 'SYSTEM_ADMIN' || canCreate) ? <div className="button-group">{user?.role === 'SYSTEM_ADMIN' && <LedgerExportButton dataset="contracts" fileName="合同台账" filters={{ q }} />}{canCreate && <button className="button primary" onClick={() => { setContractType('SUPPORT'); setAttachmentFiles([]); setNotice(''); setModal(true); }}><Plus size={17} />登记合同</button>}</div> : undefined} />
     {notice && <div className="operation-banner">{notice}</div>}
     <div className="toolbar"><SearchBar value={q} onChange={(value) => { setQ(value); setPage(1); }} placeholder="搜索项目、合同主体或签约方" /><span className="result-count">{contracts.data?.total ?? 0} 份合同</span></div>
-    <section className="panel table-panel">{contracts.isLoading ? <LoadingState /> : contracts.error ? <ErrorState error={contracts.error} /> : <><DataTable columns={columns} rows={contracts.data?.items ?? []} rowKey={(row) => row.id} /><Pagination page={page} total={contracts.data?.total ?? 0} onPageChange={setPage} /></>}</section>
+    <section className="panel table-panel">{contracts.isLoading ? <LoadingState /> : contracts.error ? <ErrorState error={contracts.error} /> : <><DataTable className="compact-default" columns={columns} rows={contracts.data?.items ?? []} rowKey={(row) => row.id} /><Pagination page={page} total={contracts.data?.total ?? 0} onPageChange={setPage} /></>}</section>
     <Modal open={modal || Boolean(editing)} onClose={() => { setModal(false); setEditing(null); setAttachmentFiles([]); }} title={editing ? '编辑合同' : '登记合同'} description={editing ? '修改会保留审计记录并重新计算项目汇总。' : '合同保存为已签署状态后立即进入项目汇总。'} size="large">
       <form className="form-grid" onSubmit={submit} key={editing?.id ?? 'new'}>
         <Field label="关联项目"><SearchableSelect name="projectId" ariaLabel="关联项目" required defaultValue={editing?.projectId ?? editing?.project.id ?? ''} disabled={projects.isLoading || projects.isError} placeholder="请选择项目" searchPlaceholder="搜索项目编码或名称" options={(projects.data ?? []).map((item) => ({ value: item.id, label: `${item.projectCode} · ${item.name}` }))} /></Field>

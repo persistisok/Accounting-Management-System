@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Archive, ArrowUpRight, CheckCircle2, ClipboardCheck, MousePointerClick, Pencil, Plus, XCircle } from 'lucide-react';
+import { Archive, CheckCircle2, ClipboardCheck, MousePointerClick, Pencil, Plus, Trash2, XCircle } from 'lucide-react';
 import { type FormEvent, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { DataTable, type TableColumn } from '../components/DataTable';
@@ -23,6 +23,7 @@ import type { ListResponse, Project, ProjectManager } from '../lib/types';
 export function ProjectsPage() {
   const { user } = useAuth();
   const canEdit = hasPermission(user, 'PROJECTS', 'EDIT');
+  const canCreate = hasPermission(user, 'PROJECTS', 'ENTRY') && user?.role !== 'EXTERNAL';
   const canReview = hasPermission(user, 'PROJECTS', 'REVIEW');
   const isPm = user?.role === 'PM';
   const [params, setParams] = useSearchParams();
@@ -33,6 +34,7 @@ export function ProjectsPage() {
   const [statusRequesting, setStatusRequesting] = useState<Project | null>(null);
   const [archiveRequesting, setArchiveRequesting] = useState<Project | null>(null);
   const [reviewing, setReviewing] = useState<Project | null>(null);
+  const [deleting, setDeleting] = useState<Project | null>(null);
   const [attachmentFiles, setAttachmentFiles] = useState<File[]>([]);
   const [notice, setNotice] = useState('');
   const navigate = useNavigate();
@@ -73,6 +75,13 @@ export function ProjectsPage() {
       });
     },
   });
+  const removeProject = useMutation({
+    mutationFn: (id: string) => api.delete<Project>(`/projects/${id}`),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['projects'] });
+      setDeleting(null);
+    },
+  });
 
   const columns: TableColumn<Project>[] = [
     { key: 'code', label: '项目编码', render: (row) => <span className="mono key-cell">{row.projectCode}</span> },
@@ -85,7 +94,7 @@ export function ProjectsPage() {
     { key: 'attachments', label: '附件列表', render: (row) => <LedgerAttachmentList objectType="PROJECT" objectId={row.id} attachments={row.attachments ?? []} /> },
     { key: 'status', label: '项目状态', render: (row) => <ProjectStateCell value={row.status} reviewState={row.statusReviewState} requestedValue={row.requestedStatus} reviewer={row.statusReviewer?.displayName} /> },
     { key: 'archive', label: '归档状态', render: (row) => <ProjectStateCell value={row.archiveStatus} reviewState={row.archiveReviewState} requestedValue={row.requestedArchiveStatus} reviewer={row.archiveReviewer?.displayName} /> },
-    { key: 'action', label: '', className: 'sticky-actions', render: (row) => <span className="row-actions"><button className="table-action detail-action" onClick={(event) => { event.stopPropagation(); navigate(`/projects/${row.id}`); }}><ArrowUpRight size={14} />查看详情</button>{canEdit && row.archiveStatus !== 'ARCHIVED' && <button className="table-action" onClick={(event) => { event.stopPropagation(); setAttachmentFiles([]); setNotice(''); setEditing(row); }}><Pencil size={14} />编辑</button>}{isPm && row.status === 'ACTIVE' && row.statusReviewState !== 'PENDING' && <button className="table-action" onClick={(event) => { event.stopPropagation(); requestStatus.reset(); setStatusRequesting(row); }}><ClipboardCheck size={14} />状态申请</button>}{isPm && row.status !== 'ACTIVE' && row.archiveStatus === 'UNARCHIVED' && row.archiveReviewState !== 'PENDING' && <button className="table-action" onClick={(event) => { event.stopPropagation(); requestArchive.reset(); setArchiveRequesting(row); }}><Archive size={14} />申请归档</button>}{canReview && (row.statusReviewState === 'PENDING' || row.archiveReviewState === 'PENDING') && <button className="table-action" onClick={(event) => { event.stopPropagation(); reviewChange.reset(); setReviewing(row); }}><ClipboardCheck size={14} />复核</button>}</span> },
+    { key: 'action', label: '操作', className: 'sticky-actions', render: (row) => <span className="row-actions">{canEdit && row.archiveStatus !== 'ARCHIVED' && <button className="table-action" onClick={(event) => { event.stopPropagation(); setAttachmentFiles([]); setNotice(''); setEditing(row); }}><Pencil size={14} />编辑</button>}{isPm && row.status === 'ACTIVE' && row.statusReviewState !== 'PENDING' && <button className="table-action" onClick={(event) => { event.stopPropagation(); requestStatus.reset(); setStatusRequesting(row); }}><ClipboardCheck size={14} />状态申请</button>}{isPm && row.status !== 'ACTIVE' && row.archiveStatus === 'UNARCHIVED' && row.archiveReviewState !== 'PENDING' && <button className="table-action" onClick={(event) => { event.stopPropagation(); requestArchive.reset(); setArchiveRequesting(row); }}><Archive size={14} />申请归档</button>}{canReview && (row.statusReviewState === 'PENDING' || row.archiveReviewState === 'PENDING') && <button className="table-action" onClick={(event) => { event.stopPropagation(); reviewChange.reset(); setReviewing(row); }}><ClipboardCheck size={14} />复核</button>}<button className="table-action danger" disabled={user?.role !== 'SYSTEM_ADMIN'} title={user?.role === 'SYSTEM_ADMIN' ? '删除项目' : '仅系统管理员可删除项目'} onClick={(event) => { event.stopPropagation(); setDeleting(row); }}><Trash2 size={14} />删除</button></span> },
   ];
 
   function submit(event: FormEvent<HTMLFormElement>) { event.preventDefault(); save.mutate({ body: formObject(event.currentTarget), files: attachmentFiles }); }
@@ -93,11 +102,11 @@ export function ProjectsPage() {
   const periodValue = editing ? (periodUnit === 'YEAR' ? editing.periodMonths / 12 : editing.periodMonths) : undefined;
 
   return <div className="page-enter">
-    <PageHeader eyebrow="项目管理 / 项目台账" title="项目台账" description="点击项目可查看完整业务详情。" action={(user?.role === 'SYSTEM_ADMIN' || canEdit) ? <div className="button-group">{user?.role === 'SYSTEM_ADMIN' && <LedgerExportButton dataset="projects" fileName="项目台账" filters={{ q }} />}{canEdit && <button className="button primary" onClick={() => { setAttachmentFiles([]); setNotice(''); setModal(true); }}><Plus size={17} />新建项目</button>}</div> : undefined} />
-    <div className="project-detail-hint" role="note"><MousePointerClick size={18} /><div><strong>点击项目行可进入详情</strong><span>查看项目概览、资金轨道、合同、流水和发票。</span></div><span>点击项目行或“查看详情”</span></div>
+    <PageHeader eyebrow="项目管理 / 项目台账" title="项目台账" description="点击项目可查看完整业务详情。" action={(user?.role === 'SYSTEM_ADMIN' || canCreate) ? <div className="button-group">{user?.role === 'SYSTEM_ADMIN' && <LedgerExportButton dataset="projects" fileName="项目台账" filters={{ q }} />}{canCreate && <button className="button primary" onClick={() => { setAttachmentFiles([]); setNotice(''); setModal(true); }}><Plus size={17} />新建项目</button>}</div> : undefined} />
+    <div className="project-detail-hint" role="note"><MousePointerClick size={18} /><div><strong>点击项目行可进入详情</strong><span>查看项目概览、资金轨道、合同、流水和发票。</span></div><span>点击项目行</span></div>
     {notice && <div className="operation-banner">{notice}</div>}
     <div className="toolbar"><SearchBar value={q} onChange={(value) => setParams(value ? { q: value } : {})} placeholder="搜索项目编码、名称或平台" /><span className="result-count">{projects.data?.total ?? 0} 个项目</span></div>
-    <section className="panel table-panel">{projects.isLoading ? <LoadingState /> : projects.error ? <ErrorState error={projects.error} /> : <><DataTable columns={columns} rows={projects.data?.items ?? []} rowKey={(row) => row.id} onRowClick={(row) => navigate(`/projects/${row.id}`)} /><Pagination page={page} total={projects.data?.total ?? 0} onPageChange={(nextPage) => { const next = new URLSearchParams(params); if (nextPage === 1) next.delete('page'); else next.set('page', String(nextPage)); setParams(next); }} /></>}</section>
+    <section className="panel table-panel">{projects.isLoading ? <LoadingState /> : projects.error ? <ErrorState error={projects.error} /> : <><DataTable className="compact-default" columns={columns} rows={projects.data?.items ?? []} rowKey={(row) => row.id} onRowClick={(row) => navigate(`/projects/${row.id}`)} /><Pagination page={page} total={projects.data?.total ?? 0} onPageChange={(nextPage) => { const next = new URLSearchParams(params); if (nextPage === 1) next.delete('page'); else next.set('page', String(nextPage)); setParams(next); }} /></>}</section>
     <Modal open={modal || Boolean(editing)} onClose={() => { setModal(false); setEditing(null); setAttachmentFiles([]); }} title={editing ? '编辑项目' : '新建项目'} description={editing ? `修改 ${editing.projectCode} 的基础信息。` : '填写平台缩写后，系统将结合发布日期、当月序号和随机尾码生成项目编码。'} size="large">
       <form onSubmit={submit} className="form-grid" key={editing?.id ?? 'new'}>
         <Field label="项目名称" span={2}><Input name="name" required defaultValue={editing?.name} /></Field>
@@ -125,6 +134,7 @@ export function ProjectsPage() {
       </form>
     </Modal>
     <ConfirmActionModal open={Boolean(archiveRequesting)} onClose={() => setArchiveRequesting(null)} title="申请项目归档" description={archiveRequesting ? `确认申请将“${archiveRequesting.name}”设为已归档？管理员复核通过后生效。` : ''} confirmLabel="提交归档申请" pending={requestArchive.isPending} error={requestArchive.error} onConfirm={() => archiveRequesting && requestArchive.mutate(archiveRequesting.id)} />
+    <ConfirmActionModal open={Boolean(deleting)} onClose={() => setDeleting(null)} title="删除项目" description={deleting ? `确认永久删除“${deleting.name}”（${deleting.projectCode}）？已作废的合同、发票及流水分配记录将同时永久删除；存在未作废业务数据或项目附件时无法删除。此操作不可恢复。` : ''} confirmLabel="确认永久删除" tone="danger" pending={removeProject.isPending} error={removeProject.error} onConfirm={() => deleting && removeProject.mutate(deleting.id)} />
     <Modal open={Boolean(reviewing)} onClose={() => setReviewing(null)} title="复核项目变更" description={reviewing ? `${reviewing.name} · 复核结果和当前账号将被记录` : undefined}>
       <div className="project-review-list">
         {reviewing?.statusReviewState === 'PENDING' && <ReviewRequestRow label="项目状态" target={reviewing.requestedStatus ?? ''} requester={reviewing.statusRequester?.displayName} pending={reviewChange.isPending} onDecision={(decision) => reviewChange.mutate({ projectId: reviewing.id, kind: 'status', decision })} />}

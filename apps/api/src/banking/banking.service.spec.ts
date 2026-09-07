@@ -51,12 +51,13 @@ describe('BankingService transaction safeguards', () => {
   };
   const prisma = {
     bankAccount: { findMany: vi.fn(), count: vi.fn(), findFirst: vi.fn(), findUnique: vi.fn(), create: vi.fn(), update: vi.fn() },
-    bankTransaction: { findUnique: vi.fn(), findUniqueOrThrow: vi.fn(), create: vi.fn(), update: vi.fn() },
+    bankTransaction: { findMany: vi.fn(), count: vi.fn(), findUnique: vi.fn(), findUniqueOrThrow: vi.fn(), create: vi.fn(), update: vi.fn() },
     bankAllocation: { create: vi.fn(), updateMany: vi.fn(), aggregate: vi.fn() },
     project: { findFirst: vi.fn() },
     expertProfile: { findFirst: vi.fn() },
     membership: { findFirst: vi.fn() },
     memberDue: { findUniqueOrThrow: vi.fn(), update: vi.fn() },
+    attachment: { findMany: vi.fn() },
     $transaction: vi.fn(),
   };
   let service: BankingService;
@@ -67,6 +68,9 @@ describe('BankingService transaction safeguards', () => {
       ? (input as (tx: typeof prisma) => Promise<unknown>)(prisma)
       : Promise.all(input as Promise<unknown>[]));
     prisma.project.findFirst.mockResolvedValue({ id: 'project-id' });
+    prisma.bankTransaction.findMany.mockResolvedValue([]);
+    prisma.bankTransaction.count.mockResolvedValue(0);
+    prisma.attachment.findMany.mockResolvedValue([]);
     service = new BankingService(prisma as never, audit as never, sensitive as never);
   });
 
@@ -233,7 +237,7 @@ describe('BankingService transaction safeguards', () => {
       originalname: '银行日记账.csv', mimetype: 'text/csv', size: content.length, buffer: content,
     }, {
       id: '00000000-0000-4000-8000-000000000099', username: 'admin', displayName: '管理员',
-      role: 'SYSTEM_ADMIN', projectManagerId: null, permissions: [],
+      role: 'SYSTEM_ADMIN', projectManagerId: null, projectIds: [], permissions: [],
     });
 
     expect(createTransaction).toHaveBeenCalledWith(expect.objectContaining({
@@ -252,6 +256,36 @@ describe('BankingService transaction safeguards', () => {
       '13800138000', '测试银行', '6222000012345678', '800.00',
     ]);
     expect(audit.record).toHaveBeenCalledWith(expect.objectContaining({ action: 'EXPORT_SENSITIVE', objectType: 'BANK_EXPERT_REPORT' }));
+  });
+
+  it('imports a project expert fee list using the compact project template', async () => {
+    prisma.bankAccount.findFirst.mockResolvedValue({ id: 'account-id' });
+    prisma.expertProfile.findFirst.mockResolvedValue({
+      id: 'expert-id', status: 'ACTIVE', reviewStatus: 'APPROVED', professionalTitle: '主任医师',
+      bankName: '测试银行', bankAccountEncrypted: 'encrypted:6222000012345678',
+      person: { idNumberEncrypted: 'encrypted:110101199001011234', phoneEncrypted: 'encrypted:13800138000' },
+    });
+    const createTransaction = vi.spyOn(service, 'createTransaction').mockResolvedValue({} as never);
+    const content = Buffer.from(`${service.projectExpertFeeImportTemplate().toString('utf8')}张三,110101199001011234,5000.00\r\n`, 'utf8');
+
+    const result = await service.importProjectExpertFees(
+      '00000000-0000-4000-8000-000000000002',
+      { originalname: '专家劳务费.csv', mimetype: 'text/csv', size: content.length, buffer: content },
+      { bankAccountId: '00000000-0000-4000-8000-000000000001', transactionDate: '2026-08-18' },
+      {
+        id: '00000000-0000-4000-8000-000000000099', username: 'admin', displayName: '管理员',
+        role: 'SYSTEM_ADMIN', projectManagerId: null, projectIds: [], permissions: [],
+      },
+    );
+
+    expect(createTransaction).toHaveBeenCalledWith(expect.objectContaining({
+      projectId: '00000000-0000-4000-8000-000000000002', expertProfileId: 'expert-id',
+      bankAccountId: '00000000-0000-4000-8000-000000000001', transactionAt: '2026-08-18',
+      category: 'EXPERT_FEE', direction: 'OUT', amount: '5000.00', nature: '专家劳务费',
+    }), expect.any(String), expect.any(Object), expect.objectContaining({
+      rawData: expect.objectContaining({ 专家身份证号: '***1234' }),
+    }));
+    expect(result).toMatchObject({ total: 1, successCount: 1, failureCount: 0 });
   });
 
   it('allocates a membership payment to the oldest outstanding dues without a project', async () => {
@@ -286,6 +320,40 @@ describe('BankingService transaction safeguards', () => {
     expect(prisma.memberDue.update).toHaveBeenCalledTimes(2);
   });
 
+  it('keeps the selected project on every membership payment allocation', async () => {
+    prisma.bankAccount.findFirst.mockResolvedValue({ id: 'account-id' });
+    prisma.membership.findFirst
+      .mockResolvedValueOnce({ id: 'member-id' })
+      .mockResolvedValueOnce({
+        id: 'member-id',
+        dues: [
+          { id: 'due-1', amountDue: '100.00', allocations: [] },
+          { id: 'due-2', amountDue: '100.00', allocations: [] },
+        ],
+      });
+    prisma.memberDue.findUniqueOrThrow.mockResolvedValue({ amountDue: '100.00' });
+    prisma.bankAllocation.aggregate.mockResolvedValue({ _sum: { allocatedAmount: '100.00' } });
+    prisma.bankTransaction.create.mockResolvedValue({ ...transaction, direction: 'IN' });
+    prisma.bankTransaction.findUniqueOrThrow.mockResolvedValue({ ...transaction, direction: 'IN' });
+
+    await service.createTransaction({
+      bankAccountId: '00000000-0000-4000-8000-000000000001', projectId: '00000000-0000-4000-8000-000000000002',
+      membershipId: '00000000-0000-4000-8000-000000000004', category: 'MEMBER_DUE', transactionAt: '2026-07-22',
+      counterpartyName: '测试会员', counterpartyBankName: '测试银行', counterpartyAccountNumber: '6222000012345678',
+      direction: 'IN', amount: '120.00', nature: '会员会费',
+    }, 'admin-id');
+
+    expect(prisma.project.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: '00000000-0000-4000-8000-000000000002', status: 'ACTIVE' },
+    }));
+    expect(prisma.bankAllocation.create).toHaveBeenCalledTimes(2);
+    for (const call of prisma.bankAllocation.create.mock.calls) {
+      expect(call[0]).toEqual(expect.objectContaining({ data: expect.objectContaining({
+        projectId: '00000000-0000-4000-8000-000000000002', category: 'MEMBER_DUE',
+      }) }));
+    }
+  });
+
   it('rejects categories outside the four supported business categories', async () => {
     prisma.bankAccount.findFirst.mockResolvedValue({ id: 'account-id' });
     await expect(service.createTransaction({
@@ -293,5 +361,24 @@ describe('BankingService transaction safeguards', () => {
       category: 'OTHER', transactionAt: '2026-07-22T10:00:00', counterpartyName: '测试对象',
       counterpartyBankName: '测试银行', counterpartyAccountNumber: '6222000012345678', direction: 'IN', amount: '100.00', nature: '其他',
     }, 'admin-id')).rejects.toThrow('资金分类仅支持');
+  });
+
+  it('filters the ledger by category, project, date range and status', async () => {
+    await service.list({
+      page: 1, pageSize: 20, category: 'SUPPORT_RECEIPT',
+      projectId: '00000000-0000-4000-8000-000000000002',
+      transactionFrom: '2026-01-01', transactionTo: '2026-12-31', transactionStatus: 'ACTIVE',
+    });
+
+    expect(prisma.bankTransaction.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({
+      settlementApplicable: true,
+      transactionAt: { gte: new Date('2026-01-01'), lte: new Date('2026-12-31') },
+      AND: [{ allocations: { some: { category: 'SUPPORT_RECEIPT', projectId: '00000000-0000-4000-8000-000000000002' } } }],
+    }) }));
+  });
+
+  it('rejects a reversed transaction date range', async () => {
+    await expect(service.list({ page: 1, pageSize: 20, transactionFrom: '2026-08-01', transactionTo: '2026-07-01' }))
+      .rejects.toThrow('结束时间不能早于起始时间');
   });
 });

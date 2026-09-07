@@ -1,5 +1,5 @@
 import { DueStatus, RecordStatus } from '@prisma/client';
-import { IsBooleanString, IsDateString, IsEnum, IsNumberString, IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
+import { IsBooleanString, IsDateString, IsEnum, IsIn, IsNumberString, IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
 import { ListQueryDto } from '../common/query.dto';
 
 export class MembershipListQueryDto extends ListQueryDto {
@@ -25,20 +25,38 @@ export class UpdateCommitteeDto {
 
 export class CreateMembershipDto {
   @IsString() @MaxLength(200) memberName!: string;
-  @IsUUID() committeeId!: string;
+  @IsOptional() @IsString() @MaxLength(200) organizationName?: string;
+  @IsOptional() @IsString() @MaxLength(100) department?: string;
+  @IsOptional() @IsString() @MaxLength(32) idNumber?: string;
+  @IsOptional() @IsString() @MaxLength(30) phone?: string;
+  @IsOptional() @IsString() @MaxLength(200) email?: string;
+  @IsOptional() @IsBooleanString() joinsCommittee?: string;
+  @IsOptional() @IsUUID() committeeId?: string;
   @IsString() @MaxLength(50) memberType!: string;
-  @IsString() @MaxLength(50) memberPosition!: string;
-  @IsBooleanString() certificateIssued!: string;
+  @IsOptional() @IsString() @MaxLength(50) memberPosition?: string;
+  @IsOptional() @IsIn(['IN_OFFICE', 'LEFT_OFFICE']) committeeMemberStatus?: string;
+  @IsOptional() @IsNumberString() committeeTerm?: string;
+  @IsOptional() @IsBooleanString() certificateIssued?: string;
+  @IsOptional() @IsBooleanString() appointmentLetterIssued?: string;
   @IsUUID() pmUserId!: string;
   @IsOptional() @IsDateString() joinedOn?: string;
 }
 
 export class UpdateMembershipDto {
   @IsOptional() @IsString() @MaxLength(200) memberName?: string;
+  @IsOptional() @IsString() @MaxLength(200) organizationName?: string;
+  @IsOptional() @IsString() @MaxLength(100) department?: string;
+  @IsOptional() @IsString() @MaxLength(32) idNumber?: string;
+  @IsOptional() @IsString() @MaxLength(30) phone?: string;
+  @IsOptional() @IsString() @MaxLength(200) email?: string;
+  @IsOptional() @IsBooleanString() joinsCommittee?: string;
   @IsOptional() @IsUUID() committeeId?: string;
   @IsOptional() @IsString() @MaxLength(50) memberType?: string;
   @IsOptional() @IsString() @MaxLength(50) memberPosition?: string;
+  @IsOptional() @IsIn(['IN_OFFICE', 'LEFT_OFFICE']) committeeMemberStatus?: string;
+  @IsOptional() @IsNumberString() committeeTerm?: string;
   @IsOptional() @IsBooleanString() certificateIssued?: string;
+  @IsOptional() @IsBooleanString() appointmentLetterIssued?: string;
   @IsOptional() @IsUUID() pmUserId?: string;
   @IsOptional() @IsDateString() joinedOn?: string;
   @IsOptional() @IsEnum(RecordStatus) status?: RecordStatus;

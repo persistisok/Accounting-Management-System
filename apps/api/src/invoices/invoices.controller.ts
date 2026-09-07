@@ -5,7 +5,7 @@ import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
 import { RequirePermission } from '../auth/permissions';
 import { AuthUser, CurrentUser } from '../common/current-user.decorator';
-import { CreateInvoiceDto, InvoiceListQueryDto, UpdateInvoiceDto } from './invoices.dto';
+import { CollectMemberInvoiceDto, CreateInvoiceDto, InvoiceCategoryQueryDto, InvoiceListQueryDto, UpdateInvoiceDto } from './invoices.dto';
 import { InvoiceImportFile, InvoicesService } from './invoices.service';
 
 @Controller('invoices')
@@ -17,28 +17,32 @@ export class InvoicesController {
   @RequirePermission('INVOICES', 'VIEW')
   list(@Query() query: InvoiceListQueryDto, @CurrentUser() user: AuthUser) { return this.invoices.list(query, user); }
 
+  @Get('member-options')
+  @RequirePermission('INVOICES', 'VIEW')
+  memberOptions(@CurrentUser() user: AuthUser) { return this.invoices.memberOptions(user); }
+
   @Get('import-template')
-  @Roles('SYSTEM_ADMIN', 'ADMIN', 'PM')
-  @RequirePermission('INVOICES', 'EDIT')
-  importTemplate() {
-    return new StreamableFile(this.invoices.importTemplate(), {
+  @Roles('SYSTEM_ADMIN', 'ADMIN', 'PM', 'EXTERNAL')
+  @RequirePermission('INVOICES', 'ENTRY')
+  importTemplate(@Query() query: InvoiceCategoryQueryDto) {
+    return new StreamableFile(this.invoices.importTemplate(query.category), {
       type: 'text/csv; charset=utf-8',
       disposition: `attachment; filename*=UTF-8''${encodeURIComponent('发票台账导入模板.csv')}`,
     });
   }
 
   @Post('import')
-  @Roles('SYSTEM_ADMIN', 'ADMIN', 'PM')
-  @RequirePermission('INVOICES', 'EDIT')
+  @Roles('SYSTEM_ADMIN', 'ADMIN', 'PM', 'EXTERNAL')
+  @RequirePermission('INVOICES', 'ENTRY')
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 2 * 1024 * 1024, files: 1 } }))
-  importInvoices(@UploadedFile() file: InvoiceImportFile | undefined, @CurrentUser() user: AuthUser) {
+  importInvoices(@UploadedFile() file: InvoiceImportFile | undefined, @Query() query: InvoiceCategoryQueryDto, @CurrentUser() user: AuthUser) {
     if (!file) throw new BadRequestException('请选择 CSV 导入文件');
-    return this.invoices.importInvoices(file, user);
+    return this.invoices.importInvoices(file, user, query.category);
   }
 
   @Post()
-  @Roles('SYSTEM_ADMIN', 'ADMIN', 'PM')
-  @RequirePermission('INVOICES', 'EDIT')
+  @Roles('SYSTEM_ADMIN', 'ADMIN', 'PM', 'EXTERNAL')
+  @RequirePermission('INVOICES', 'ENTRY')
   create(@Body() dto: CreateInvoiceDto, @CurrentUser() user: AuthUser) { return this.invoices.create(dto, user.id, user); }
 
   @Patch(':id')
@@ -46,6 +50,13 @@ export class InvoicesController {
   @RequirePermission('INVOICES', 'EDIT')
   update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateInvoiceDto, @CurrentUser() user: AuthUser) {
     return this.invoices.update(id, dto, user.id, user);
+  }
+
+  @Post(':id/collect')
+  @Roles('SYSTEM_ADMIN', 'ADMIN')
+  @RequirePermission('INVOICES', 'EDIT')
+  collect(@Param('id', ParseUUIDPipe) id: string, @Body() dto: CollectMemberInvoiceDto, @CurrentUser() user: AuthUser) {
+    return this.invoices.collectMemberInvoice(id, dto.membershipId, user.id);
   }
 
   @Post(':id/void')

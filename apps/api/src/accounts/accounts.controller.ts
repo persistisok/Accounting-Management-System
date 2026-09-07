@@ -15,6 +15,9 @@ export class AccountsController {
   @Get()
   list(@Query() query: AccountListQueryDto) { return this.accounts.list(query); }
 
+  @Get('project-options')
+  projectOptions() { return this.accounts.projectOptions(); }
+
   @Post()
   create(@Body() dto: CreateAccountDto, @CurrentUser() user: AuthUser) {
     return this.accounts.create(dto, user.id);

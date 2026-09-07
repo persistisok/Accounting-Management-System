@@ -156,7 +156,7 @@ test('银行流水直接选择项目和资金分类并保留中文日期', async
   const fieldLabels = await dialog.locator('.field > span').allTextContents();
   expect(fieldLabels.slice(0, 2)).toEqual(['收支方向', '资金分类']);
   await expect(dialog.getByLabel('收支方向')).toHaveValue('IN');
-  await expect(dialog.getByLabel('资金分类').locator('option')).toHaveText(['支持款收入', '会员会费收入']);
+  await expect(dialog.getByLabel('资金分类').locator('option')).toHaveText(['支持款收入', '会费收入']);
   const ownAccount = dialog.getByRole('combobox', { name: '本方银行账户' });
   await ownAccount.fill('示例银行');
   await dialog.getByRole('option', { name: /示例银行上海分行/ }).click();
@@ -265,19 +265,22 @@ test('管理员可以维护 PM 且停用后不再进入项目下拉框', async (
   await expect(page.locator('select[name="pmUserId"] option', { hasText: displayName })).toHaveCount(0);
 });
 
-test('访客账号只能查看且不能进入系统管理', async ({ page }) => {
+test('第三方外部账号只能查看指定项目且不能进入系统管理', async ({ page }) => {
   const suffix = Date.now();
   const username = `guest.e2e.${suffix}`;
-  const displayName = `访客${String(suffix).slice(-4)}`;
+  const displayName = `第三方${String(suffix).slice(-4)}`;
   await login(page);
   await page.getByRole('link', { name: '账号管理' }).click();
   await page.getByRole('button', { name: '新增账号' }).click();
   const dialog = page.getByRole('dialog', { name: '新增账号' });
   await dialog.getByLabel('姓名').fill(displayName);
   await dialog.getByLabel('登录用户名').fill(username);
+  await dialog.getByPlaceholder('搜索项目编码或名称').click();
+  await dialog.locator('.searchable-multi').getByRole('option').first().click();
+  await dialog.getByLabel('项目台账权限').selectOption('VIEW');
   await dialog.getByLabel('初始密码').fill('GuestTest123!');
   await dialog.getByRole('button', { name: '创建账号' }).click();
-  await expect(page.getByRole('row').filter({ hasText: username })).toContainText('访客');
+  await expect(page.getByRole('row').filter({ hasText: username })).toContainText('第三方外部');
 
   await page.getByRole('button', { name: '退出登录' }).click();
   await page.getByLabel('用户名').fill(username);

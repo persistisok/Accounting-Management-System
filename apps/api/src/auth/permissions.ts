@@ -17,17 +17,14 @@ export const RequirePermission = (resource: PermissionResourceValue, level: Perm
 
 const permissionRank: Record<PermissionLevelValue, number> = {
   VIEW: 1,
-  EDIT: 2,
-  REVIEW: 3,
+  ENTRY: 2,
+  EDIT: 3,
+  REVIEW: 4,
 };
 
 export function hasPermission(user: AuthUser | undefined, resource: PermissionResourceValue, level: PermissionLevelValue) {
   if (!user) return false;
   if (user.role === 'SYSTEM_ADMIN') return true;
-  if (user.role === 'GUEST') return level === 'VIEW';
-  if (user.role === 'PM' && ['PROJECTS', 'CONTRACTS', 'BANKING', 'INVOICES'].includes(resource)) {
-    return Boolean(user.projectManagerId) && level !== 'REVIEW';
-  }
   const granted = user.permissions.find((permission) => permission.resource === resource)?.level;
   return Boolean(granted && permissionRank[granted] >= permissionRank[level]);
 }

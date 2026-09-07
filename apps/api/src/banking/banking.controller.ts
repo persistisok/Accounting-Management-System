@@ -6,7 +6,7 @@ import { RolesGuard } from '../auth/roles.guard';
 import { RequirePermission } from '../auth/permissions';
 import { AuthUser, CurrentUser } from '../common/current-user.decorator';
 import { BankingImportFile, BankingService } from './banking.service';
-import { BankAccountListQueryDto, CreateBankAccountDto, CreateTransactionDto, TransactionListQueryDto, UpdateBankAccountDto, UpdateTransactionDto } from './banking.dto';
+import { BankAccountListQueryDto, CreateBankAccountDto, CreateTransactionDto, ProjectExpertFeeImportDto, TransactionListQueryDto, UpdateBankAccountDto, UpdateTransactionDto } from './banking.dto';
 
 @Controller('banking')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -46,8 +46,8 @@ export class BankingController {
   list(@Query() query: TransactionListQueryDto, @CurrentUser() user: AuthUser) { return this.banking.list(query, user); }
 
   @Get('transactions/import-template')
-  @Roles('SYSTEM_ADMIN', 'ADMIN', 'PM')
-  @RequirePermission('BANKING', 'EDIT')
+  @Roles('SYSTEM_ADMIN', 'ADMIN', 'PM', 'EXTERNAL')
+  @RequirePermission('BANKING', 'ENTRY')
   importTemplate() {
     return new StreamableFile(this.banking.importTemplate(), {
       type: 'text/csv; charset=utf-8',
@@ -56,17 +56,41 @@ export class BankingController {
   }
 
   @Post('transactions/import')
-  @Roles('SYSTEM_ADMIN', 'ADMIN', 'PM')
-  @RequirePermission('BANKING', 'EDIT')
+  @Roles('SYSTEM_ADMIN', 'ADMIN', 'PM', 'EXTERNAL')
+  @RequirePermission('BANKING', 'ENTRY')
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 2 * 1024 * 1024, files: 1 } }))
   importTransactions(@UploadedFile() file: BankingImportFile | undefined, @CurrentUser() user: AuthUser) {
     if (!file) throw new BadRequestException('请选择 CSV 导入文件');
     return this.banking.importTransactions(file, user);
   }
 
+  @Get('projects/:projectId/expert-fees/import-template')
+  @Roles('SYSTEM_ADMIN', 'ADMIN', 'PM', 'EXTERNAL')
+  @RequirePermission('BANKING', 'ENTRY')
+  projectExpertFeeImportTemplate() {
+    return new StreamableFile(this.banking.projectExpertFeeImportTemplate(), {
+      type: 'text/csv; charset=utf-8',
+      disposition: `attachment; filename*=UTF-8''${encodeURIComponent('专家劳务费导入模板.csv')}`,
+    });
+  }
+
+  @Post('projects/:projectId/expert-fees/import')
+  @Roles('SYSTEM_ADMIN', 'ADMIN', 'PM', 'EXTERNAL')
+  @RequirePermission('BANKING', 'ENTRY')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 2 * 1024 * 1024, files: 1 } }))
+  importProjectExpertFees(
+    @Param('projectId', ParseUUIDPipe) projectId: string,
+    @UploadedFile() file: BankingImportFile | undefined,
+    @Body() dto: ProjectExpertFeeImportDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    if (!file) throw new BadRequestException('请选择 CSV 导入文件');
+    return this.banking.importProjectExpertFees(projectId, file, dto, user);
+  }
+
   @Post('transactions')
-  @Roles('SYSTEM_ADMIN', 'ADMIN', 'PM')
-  @RequirePermission('BANKING', 'EDIT')
+  @Roles('SYSTEM_ADMIN', 'ADMIN', 'PM', 'EXTERNAL')
+  @RequirePermission('BANKING', 'ENTRY')
   create(@Body() dto: CreateTransactionDto, @CurrentUser() user: AuthUser) {
     return this.banking.createTransaction(dto, user.id, user);
   }

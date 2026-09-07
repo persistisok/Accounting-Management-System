@@ -8,7 +8,7 @@ export function LedgerExportButton({
   filters = {},
   sensitive = false,
 }: {
-  dataset: 'projects' | 'contracts' | 'banking' | 'invoices' | 'supporters' | 'executors' | 'experts' | 'members';
+  dataset: 'projects' | 'contracts' | 'banking' | 'invoices' | 'donation-receipts' | 'supporters' | 'executors' | 'experts' | 'members';
   fileName: string;
   filters?: Record<string, string | number | undefined>;
   sensitive?: boolean;

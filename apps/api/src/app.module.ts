@@ -15,6 +15,8 @@ import { OrganizationsModule } from './organizations/organizations.module';
 import { PrismaModule } from './prisma.module';
 import { ProjectsModule } from './projects/projects.module';
 import { ProjectManagersModule } from './project-managers/project-managers.module';
+import { ProjectArchiveModule } from './project-archive/project-archive.module';
+import { DonationReceiptsModule } from './donation-receipts/donation-receipts.module';
 
 @Module({
   imports: [
@@ -26,11 +28,13 @@ import { ProjectManagersModule } from './project-managers/project-managers.modul
     AuthModule,
     HealthModule,
     ProjectsModule,
+    ProjectArchiveModule,
     ProjectManagersModule,
     OrganizationsModule,
     ContractsModule,
     BankingModule,
     InvoicesModule,
+    DonationReceiptsModule,
     ExpertsModule,
     ExportsModule,
     MembershipsModule,

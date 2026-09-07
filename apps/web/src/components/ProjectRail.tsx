@@ -21,6 +21,12 @@ export function ProjectRail({ summary, approvedAmount, executionCost }: { summar
         <ArrowRight className="rail-arrow" />
         <RailNode icon={<ReceiptText size={18} />} label="已收票" value={summary.receivedInvoiceAmount} detail="收到的有效发票" tone="income" />
       </div>
+      <div className="rail-divider"><span>关联项目的会费收入</span></div>
+      <div className="rail-row member-income">
+        <RailNode icon={<Landmark size={18} />} label="会费实收" value={summary.memberDueReceivedAmount} detail="已绑定本项目的会费流水" tone="income" />
+        <ArrowRight className="rail-arrow" />
+        <RailNode icon={<ReceiptText size={18} />} label="会费已开票" value={summary.memberDueInvoicedAmount} detail="已绑定本项目的会费票据" tone="income" />
+      </div>
       <div className="rail-divider"><span>项目编码连接全部凭证</span></div>
       <div className="rail-row expense">
         <RailNode icon={<Landmark size={18} />} label="执行成本" value={executionCost} detail="计划成本" tone="base" />

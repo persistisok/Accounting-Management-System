@@ -27,11 +27,14 @@ describe('ExportsService', () => {
         email: 'zhang@example.com', department: '内科', position: '主任',
       },
       formOwner: { displayName: '李PM' }, reviewer: { displayName: '王复核' },
+      allocations: [
+        { allocatedAmount: '5000.00', bankTransaction: { transactionAt: new Date('2026-05-01T00:00:00.000Z') } },
+      ],
     }]);
   });
 
   it('exports full expert sensitive values and records a sensitive audit event', async () => {
-    const result = await service.export(ExportDataset.EXPERTS, { q: '张三' }, user as never);
+    const result = await service.export(ExportDataset.EXPERTS, { q: '张三', pmUserId: '00000000-0000-4000-8000-000000000001', paymentFrom: '2026-01-01', paymentTo: '2026-12-31' }, user as never);
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(result.buffer as never);
     const row = workbook.getWorksheet('专家库')!.getRow(2);
@@ -40,10 +43,12 @@ describe('ExportsService', () => {
     expect(row.getCell(5).value).toBe('plain:id-cipher');
     expect(row.getCell(7).value).toBe('plain:bank-cipher');
     expect(row.getCell(8).value).toBe('执业证.pdf');
+    expect(row.getCell(14).value).toBe(1);
+    expect(row.getCell(15).value).toBe(5000);
     expect(audit.record).toHaveBeenCalledWith(expect.objectContaining({
       actorUserId: user.id,
       action: 'EXPORT_SENSITIVE',
-      afterData: expect.objectContaining({ rowCount: 1, filters: { q: '张三' } }),
+      afterData: expect.objectContaining({ rowCount: 1, filters: { q: '张三', pmUserId: '00000000-0000-4000-8000-000000000001', paymentFrom: '2026-01-01', paymentTo: '2026-12-31' } }),
     }));
   });
 

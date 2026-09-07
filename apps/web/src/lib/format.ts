@@ -20,5 +20,8 @@ export const statusLabels: Record<string, string> = {
   CONFIRMED: '已确认', REVERSED: '已撤销', PAID: '已缴清', UNPAID: '未缴', WAIVED: '已免除',
   SUPPORT: '支持协议', EXECUTION: '执行协议', RECEIVABLE: '应收', PAYABLE: '应付',
   IN: '收入', OUT: '支出', BLUE: '蓝票', RED: '红票', ISSUED: '已开票', RECEIVED: '已收票',
-  SUPPORT_RECEIPT: '支持款收入', MEMBER_DUE: '会员会费收入', EXECUTION_PAYMENT: '执行款支出', EXPERT_FEE: '专家费支出', OTHER: '其他',
+  SUPPORT_RECEIPT: '支持款收入', MEMBER_DUE: '会费收入', EXECUTION_PAYMENT: '执行款支出', EXPERT_FEE: '专家费支出', OTHER: '其他',
+  COLLECTED: '已归集', COLLECTION_PENDING: '待归集', NOT_APPLICABLE: '无需归集',
+  SUPPORT_RECEIPT_ISSUED: '支持款收入票据', MEMBER_DUE_ISSUED: '会费收入票据',
+  EXECUTION_PAYMENT_RECEIVED: '执行款支出票据', EXPERT_FEE_RECEIVED: '专家费支出票据',
 };

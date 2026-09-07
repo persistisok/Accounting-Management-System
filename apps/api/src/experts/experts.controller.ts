@@ -21,6 +21,25 @@ export class ExpertsController {
   @Get('options')
   options(@CurrentUser() user: AuthUser) { return this.experts.options(user); }
 
+  @Get('import-template')
+  @Roles('SYSTEM_ADMIN', 'ADMIN', 'PM', 'EXTERNAL')
+  @RequirePermission('EXPERTS', 'ENTRY')
+  importTemplate() {
+    return new StreamableFile(this.experts.importTemplate(), {
+      type: 'text/csv; charset=utf-8',
+      disposition: `attachment; filename*=UTF-8''${encodeURIComponent('专家库导入模板.csv')}`,
+    });
+  }
+
+  @Post('import')
+  @Roles('SYSTEM_ADMIN', 'ADMIN', 'PM', 'EXTERNAL')
+  @RequirePermission('EXPERTS', 'ENTRY')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 2 * 1024 * 1024, files: 1 } }))
+  importExperts(@UploadedFile() file: { buffer: Buffer; originalname: string } | undefined, @CurrentUser() user: AuthUser) {
+    if (!file) throw new BadRequestException('请选择需要导入的 CSV 文件');
+    return this.experts.importExperts(file, user);
+  }
+
   @Get(':id/payment-details')
   @Roles('SYSTEM_ADMIN', 'ADMIN', 'PM')
   @RequirePermission('EXPERTS', 'EDIT')
@@ -36,8 +55,8 @@ export class ExpertsController {
   }
 
   @Post()
-  @Roles('SYSTEM_ADMIN', 'ADMIN', 'PM')
-  @RequirePermission('EXPERTS', 'EDIT')
+  @Roles('SYSTEM_ADMIN', 'ADMIN', 'PM', 'EXTERNAL')
+  @RequirePermission('EXPERTS', 'ENTRY')
   create(@Body() dto: CreateExpertDto, @CurrentUser() user: AuthUser) { return this.experts.create(dto, user.id, user); }
 
   @Patch(':id')
@@ -62,8 +81,8 @@ export class ExpertsController {
   }
 
   @Post(':id/credentials')
-  @Roles('SYSTEM_ADMIN', 'ADMIN', 'PM')
-  @RequirePermission('EXPERTS', 'EDIT')
+  @Roles('SYSTEM_ADMIN', 'ADMIN', 'PM', 'EXTERNAL')
+  @RequirePermission('EXPERTS', 'ENTRY')
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 10 * 1024 * 1024, files: 1 } }))
   async uploadCredential(
     @Param('id', ParseUUIDPipe) id: string,

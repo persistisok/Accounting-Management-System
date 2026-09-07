@@ -11,7 +11,7 @@ enum UserRole {
   SYSTEM_ADMIN
   ADMIN
   PM
-  GUEST
+  EXTERNAL
 }
 
 enum PermissionResource {
@@ -19,6 +19,7 @@ enum PermissionResource {
   CONTRACTS
   BANKING
   INVOICES
+  DONATION_RECEIPTS
   SUPPORTERS
   EXECUTORS
   EXPERTS
@@ -27,6 +28,7 @@ enum PermissionResource {
 
 enum PermissionLevel {
   VIEW
+  ENTRY
   EDIT
   REVIEW
 }
@@ -48,6 +50,13 @@ enum ArchiveStatus {
 }
 
 enum ProjectReviewState {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum ArchiveChecklistStatus {
+  NOT_UPLOADED
   PENDING
   APPROVED
   REJECTED
@@ -131,9 +140,27 @@ enum InvoiceStatus {
   VOID
 }
 
+enum DonationReceiptStatus {
+  NORMAL
+  VOID
+}
+
+enum InvoiceCollectionStatus {
+  NOT_APPLICABLE
+  PENDING
+  COLLECTED
+}
+
 enum InvoiceDirection {
   ISSUED
   RECEIVED
+}
+
+enum InvoiceCategory {
+  SUPPORT_RECEIPT_ISSUED
+  MEMBER_DUE_ISSUED
+  EXECUTION_PAYMENT_RECEIVED
+  EXPERT_FEE_RECEIVED
 }
 
 enum DueStatus {
@@ -156,11 +183,16 @@ model User {
 
   projectManager ProjectManager? @relation(fields: [projectManagerId], references: [id], onDelete: SetNull)
   permissions    UserPermission[]
+  projectScopes  UserProjectScope[]
   expertReviews ExpertProfile[] @relation("ExpertReviewer")
   requestedProjectStatuses Project[] @relation("ProjectStatusRequester")
   reviewedProjectStatuses  Project[] @relation("ProjectStatusReviewer")
   requestedProjectArchives Project[] @relation("ProjectArchiveRequester")
   reviewedProjectArchives  Project[] @relation("ProjectArchiveReviewer")
+  uploadedArchiveItems ProjectArchiveItem[] @relation("ArchiveItemUploader")
+  reviewedArchiveItems ProjectArchiveItem[] @relation("ArchiveItemReviewer")
+  collectedInvoices Invoice[] @relation("InvoiceCollector")
+  auditLogs AuditLog[] @relation("AuditActor")
 
   @@map("users")
 }
@@ -239,11 +271,51 @@ model Project {
   contracts  Contract[]
   allocations BankAllocation[]
   invoices   Invoice[]
+  donationReceipts DonationReceipt[]
   candidates ProjectExecutorCandidate[]
+  authorizedUsers UserProjectScope[]
+  archiveItems ProjectArchiveItem[]
 
   @@index([pmUserId, status])
   @@index([statusReviewState, archiveReviewState])
   @@map("projects")
+}
+
+model ProjectArchiveItem {
+  id                 String                 @id @default(uuid()) @db.Uuid
+  projectId          String                 @map("project_id") @db.Uuid
+  itemKey            String                 @map("item_key") @db.VarChar(64)
+  status             ArchiveChecklistStatus @default(NOT_UPLOADED)
+  notApplicable      Boolean                @default(false) @map("not_applicable")
+  notApplicableReason String?               @map("not_applicable_reason") @db.VarChar(500)
+  rejectionReason    String?                @map("rejection_reason") @db.VarChar(500)
+  uploadedById       String?                @map("uploaded_by_id") @db.Uuid
+  submittedAt        DateTime?              @map("submitted_at")
+  reviewerId         String?                @map("reviewer_id") @db.Uuid
+  reviewedAt         DateTime?              @map("reviewed_at")
+  createdAt          DateTime               @default(now()) @map("created_at")
+  updatedAt          DateTime               @updatedAt @map("updated_at")
+
+  project  Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  uploader User?   @relation("ArchiveItemUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
+  reviewer User?   @relation("ArchiveItemReviewer", fields: [reviewerId], references: [id], onDelete: SetNull)
+
+  @@unique([projectId, itemKey])
+  @@index([projectId, status])
+  @@map("project_archive_items")
+}
+
+model UserProjectScope {
+  userId    String   @map("user_id") @db.Uuid
+  projectId String   @map("project_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@id([userId, projectId])
+  @@index([projectId])
+  @@map("user_project_scopes")
 }
 
 model ProjectCodeCounter {
@@ -267,6 +339,7 @@ model Organization {
   ownerUserId      String       @map("owner_user_id") @db.Uuid
   contactName      String?      @map("contact_name") @db.VarChar(100)
   contactPhone     String?      @map("contact_phone") @db.VarChar(30)
+  executorOtherCapabilityNote String? @map("executor_other_capability_note") @db.VarChar(200)
   status           RecordStatus @default(ACTIVE)
   version          Int          @default(1)
   createdAt        DateTime     @default(now()) @map("created_at")
@@ -275,10 +348,41 @@ model Organization {
   owner      ProjectManager             @relation("OrganizationOwner", fields: [ownerUserId], references: [id])
   roles      OrganizationRole[]
   contracts  Contract[]
+  donationReceipts DonationReceipt[] @relation("DonationDonor")
   candidates ProjectExecutorCandidate[]
+  serviceCapabilities ExecutorServiceCapability[]
 
   @@unique([normalizedPlatform, normalizedName])
   @@map("organizations")
+}
+
+model ServiceCapability {
+  id             String       @id @default(uuid()) @db.Uuid
+  name           String       @db.VarChar(100)
+  normalizedName String       @unique @map("normalized_name") @db.VarChar(100)
+  isOther        Boolean      @default(false) @map("is_other")
+  status         RecordStatus @default(ACTIVE)
+  sortOrder      Int          @default(0) @map("sort_order")
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
+
+  organizations ExecutorServiceCapability[]
+
+  @@index([status, sortOrder])
+  @@map("service_capabilities")
+}
+
+model ExecutorServiceCapability {
+  organizationId String   @map("organization_id") @db.Uuid
+  capabilityId   String   @map("capability_id") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  organization Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  capability   ServiceCapability @relation(fields: [capabilityId], references: [id], onDelete: Restrict)
+
+  @@id([organizationId, capabilityId])
+  @@index([capabilityId])
+  @@map("executor_service_capabilities")
 }
 
 model OrganizationRole {
@@ -403,6 +507,7 @@ model BankAllocation {
   expertProfile   ExpertProfile?   @relation(fields: [expertProfileId], references: [id], onDelete: Restrict)
 
   @@index([projectId, category, status])
+  @@index([expertProfileId, category, status])
   @@map("bank_allocations")
 }
 
@@ -410,7 +515,14 @@ model Invoice {
   id                 String        @id @default(uuid()) @db.Uuid
   invoiceCode        String?       @map("invoice_code") @db.VarChar(32)
   invoiceNumber      String?       @map("invoice_number") @db.VarChar(64)
-  projectId          String        @map("project_id") @db.Uuid
+  projectId          String?       @map("project_id") @db.Uuid
+  membershipId       String?       @map("membership_id") @db.Uuid
+  expertProfileId    String?       @map("expert_profile_id") @db.Uuid
+  payerName           String?       @map("payer_name") @db.VarChar(200)
+  collectionStatus    InvoiceCollectionStatus @default(NOT_APPLICABLE) @map("collection_status")
+  collectedById       String?       @map("collected_by_id") @db.Uuid
+  collectedAt         DateTime?     @map("collected_at")
+  category           InvoiceCategory @default(SUPPORT_RECEIPT_ISSUED)
   direction          InvoiceDirection @default(ISSUED)
   issuedOn           DateTime      @map("issued_on") @db.Date
   invoiceType        String        @map("invoice_type") @db.VarChar(30)
@@ -427,13 +539,41 @@ model Invoice {
   createdAt          DateTime      @default(now()) @map("created_at")
   updatedAt          DateTime      @updatedAt @map("updated_at")
 
-  project         Project   @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  project         Project?  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  membership      Membership? @relation(fields: [membershipId], references: [id], onDelete: Restrict)
+  expertProfile   ExpertProfile? @relation(fields: [expertProfileId], references: [id], onDelete: Restrict)
+  collectedBy     User? @relation("InvoiceCollector", fields: [collectedById], references: [id], onDelete: SetNull)
   originalInvoice Invoice?  @relation("InvoiceReversal", fields: [originalInvoiceId], references: [id], onDelete: Restrict)
   redInvoices      Invoice[] @relation("InvoiceReversal")
 
   @@unique([invoiceCode, invoiceNumber])
   @@index([projectId, status, issuedOn])
+  @@index([category, status, issuedOn])
+  @@index([membershipId, status, issuedOn])
+  @@index([category, collectionStatus, issuedOn])
+  @@index([expertProfileId, status, issuedOn])
   @@map("invoices")
+}
+
+model DonationReceipt {
+  id            String                @id @default(uuid()) @db.Uuid
+  receiptNumber String                @unique @map("receipt_number") @db.VarChar(64)
+  projectId     String                @map("project_id") @db.Uuid
+  donorId       String                @map("donor_id") @db.Uuid
+  issuedOn      DateTime              @map("issued_on") @db.Date
+  amount        Decimal               @db.Decimal(18, 2)
+  remark        String?               @db.VarChar(500)
+  status        DonationReceiptStatus @default(NORMAL)
+  version       Int                   @default(1)
+  createdAt     DateTime              @default(now()) @map("created_at")
+  updatedAt     DateTime              @updatedAt @map("updated_at")
+
+  project Project      @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  donor   Organization @relation("DonationDonor", fields: [donorId], references: [id], onDelete: Restrict)
+
+  @@index([projectId, status, issuedOn])
+  @@index([donorId, status, issuedOn])
+  @@map("donation_receipts")
 }
 
 model Person {
@@ -476,6 +616,7 @@ model ExpertProfile {
   formOwner   ProjectManager   @relation("ExpertFormOwner", fields: [formOwnerId], references: [id])
   reviewer    User?            @relation("ExpertReviewer", fields: [reviewerId], references: [id])
   allocations BankAllocation[]
+  invoices    Invoice[]
 
   @@index([status, reviewStatus, joinedOn])
   @@map("expert_profiles")
@@ -500,21 +641,34 @@ model Committee {
 model Membership {
   id           String       @id @default(uuid()) @db.Uuid
   memberName   String       @map("member_name") @db.VarChar(200)
-  committeeId  String       @map("committee_id") @db.Uuid
+  organizationName String?  @map("organization_name") @db.VarChar(200)
+  department   String?      @db.VarChar(100)
+  idNumberEncrypted String? @map("id_number_encrypted")
+  idNumberHash String?      @unique @map("id_number_hash") @db.VarChar(64)
+  idNumberMasked String?    @map("id_number_masked") @db.VarChar(32)
+  phoneEncrypted String?    @map("phone_encrypted")
+  phoneMasked  String?      @map("phone_masked") @db.VarChar(30)
+  email        String?      @db.VarChar(200)
+  committeeId  String?      @map("committee_id") @db.Uuid
   memberType   String       @map("member_type") @db.VarChar(50)
   memberPosition String?    @map("member_position") @db.VarChar(50)
+  committeeMemberStatus String? @default("IN_OFFICE") @map("committee_member_status") @db.VarChar(20)
+  committeeTerm Int?        @map("committee_term")
   certificateIssued Boolean @default(false) @map("certificate_issued")
+  appointmentLetterIssued Boolean @default(false) @map("appointment_letter_issued")
   pmUserId     String       @map("pm_user_id") @db.Uuid
   joinedOn     DateTime?    @map("joined_on") @db.Date
   status       RecordStatus @default(ACTIVE)
   createdAt    DateTime     @default(now()) @map("created_at")
   updatedAt    DateTime     @updatedAt @map("updated_at")
 
-  committee Committee   @relation(fields: [committeeId], references: [id], onDelete: Restrict)
+  committee Committee?  @relation(fields: [committeeId], references: [id], onDelete: Restrict)
   pm        ProjectManager @relation("MembershipManager", fields: [pmUserId], references: [id])
   dues      MemberDue[]
+  invoices  Invoice[]
 
   @@index([committeeId, memberName])
+  @@index([organizationName, department])
   @@map("memberships")
 }
 
@@ -564,6 +718,8 @@ model AuditLog {
   requestId   String?  @map("request_id") @db.VarChar(64)
   ipAddress   String?  @map("ip_address") @db.VarChar(64)
   occurredAt  DateTime @default(now()) @map("occurred_at")
+
+  actor User? @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
 
   @@index([objectType, objectId, occurredAt])
   @@index([actorUserId, occurredAt])

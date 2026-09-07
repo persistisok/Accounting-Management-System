@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Download, Landmark, Pencil, Plus, Trash2, Upload } from 'lucide-react';
-import { type FormEvent, useState } from 'react';
+import { Download, Landmark, Pencil, Plus, RotateCcw, Search, SlidersHorizontal, Trash2, Upload } from 'lucide-react';
+import { type FormEvent, useEffect, useRef, useState } from 'react';
 import { DataTable, type TableColumn } from '../components/DataTable';
 import { ConfirmActionModal } from '../components/ConfirmActionModal';
 import { DateInput, Field, FormActions, Input, MoneyInput, SearchableSelect, Select } from '../components/FormControls';
@@ -16,7 +16,7 @@ import { api, queryString } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { hasPermission } from '../lib/permissions';
 import { formObject } from '../lib/form';
-import { formatDate, formatMoney, statusLabels } from '../lib/format';
+import { formatDate, formatMoney } from '../lib/format';
 import type { BankAllocation, BankTransaction, ListResponse, Project } from '../lib/types';
 
 interface BankAccount {
@@ -45,17 +45,38 @@ interface BankingImportResult {
 type FundingCategory = 'SUPPORT_RECEIPT' | 'MEMBER_DUE' | 'EXECUTION_PAYMENT' | 'EXPERT_FEE';
 type AccountEditor = BankAccount | 'new' | null;
 
-export function BankingPage() {
+const fundingCategoryConfig: Record<FundingCategory, { title: string; direction: 'IN' | 'OUT'; description: string }> = {
+  SUPPORT_RECEIPT: { title: '支持款收入', direction: 'IN', description: '登记并查询项目支持款到账流水。' },
+  MEMBER_DUE: { title: '会费收入', direction: 'IN', description: '登记并查询会员会费到账流水。' },
+  EXECUTION_PAYMENT: { title: '执行款支出', direction: 'OUT', description: '登记并查询项目执行款支付流水。' },
+  EXPERT_FEE: { title: '专家费支出', direction: 'OUT', description: '登记并查询项目专家劳务费支付流水。' },
+};
+
+export function BankingPage({ fundingCategory }: { fundingCategory: FundingCategory }) {
   const { user } = useAuth();
+  const config = fundingCategoryConfig[fundingCategory];
   const canEdit = hasPermission(user, 'BANKING', 'EDIT');
+  const canCreate = hasPermission(user, 'BANKING', 'ENTRY');
   const canManageBankAccounts = canEdit && user?.role !== 'PM';
-  const [q, setQ] = useState('');
+  const [projectFilter, setProjectFilter] = useState('');
+  const [memberFilter, setMemberFilter] = useState('');
+  const [expertFilter, setExpertFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+  const [transactionFrom, setTransactionFrom] = useState('');
+  const [transactionTo, setTransactionTo] = useState('');
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [draftProject, setDraftProject] = useState('');
+  const [draftMember, setDraftMember] = useState('');
+  const [draftExpert, setDraftExpert] = useState('');
+  const [draftStatus, setDraftStatus] = useState('');
+  const [draftTransactionFrom, setDraftTransactionFrom] = useState('');
+  const [draftTransactionTo, setDraftTransactionTo] = useState('');
   const [page, setPage] = useState(1);
   const [transactionModal, setTransactionModal] = useState(false);
   const [editing, setEditing] = useState<BankTransaction | null>(null);
   const [excluding, setExcluding] = useState<BankTransaction | null>(null);
-  const [direction, setDirection] = useState<'IN' | 'OUT'>('IN');
-  const [category, setCategory] = useState<FundingCategory>('SUPPORT_RECEIPT');
+  const direction = config.direction;
+  const category = fundingCategory;
   const [expertId, setExpertId] = useState('');
   const [membershipId, setMembershipId] = useState('');
   const [counterpartyName, setCounterpartyName] = useState('');
@@ -71,8 +92,9 @@ export function BankingPage() {
   const [accountPage, setAccountPage] = useState(1);
   const [accountEditor, setAccountEditor] = useState<AccountEditor>(null);
   const [deletingAccount, setDeletingAccount] = useState<BankAccount | null>(null);
+  const filterRef = useRef<HTMLDivElement>(null);
   const queryClient = useQueryClient();
-  const transactions = useQuery({ queryKey: ['banking', q, page], queryFn: () => api.get<ListResponse<BankTransaction>>(`/banking/transactions${queryString({ q, page, pageSize: DEFAULT_PAGE_SIZE })}`) });
+  const transactions = useQuery({ queryKey: ['banking', fundingCategory, projectFilter, memberFilter, expertFilter, statusFilter, transactionFrom, transactionTo, page], queryFn: () => api.get<ListResponse<BankTransaction>>(`/banking/transactions${queryString({ category: fundingCategory, projectId: projectFilter, membershipId: memberFilter, expertProfileId: expertFilter, transactionStatus: statusFilter, transactionFrom, transactionTo, page, pageSize: DEFAULT_PAGE_SIZE })}`) });
   const accounts = useQuery({ queryKey: ['bank-account-options'], queryFn: () => api.get<BankAccount[]>('/banking/accounts/options') });
   const accountList = useQuery({
     queryKey: ['bank-accounts', accountQ, accountPage],
@@ -82,6 +104,13 @@ export function BankingPage() {
   const projects = useQuery({ queryKey: ['project-options'], queryFn: () => api.get<Pick<Project, 'id' | 'projectCode' | 'name'>[]>('/projects/options') });
   const experts = useQuery({ queryKey: ['expert-options'], queryFn: () => api.get<ExpertOption[]>('/experts/options') });
   const members = useQuery({ queryKey: ['member-payment-options'], queryFn: () => api.get<MemberPaymentOption[]>('/memberships/payments/options') });
+  useEffect(() => {
+    function closeOnOutsideClick(event: MouseEvent) {
+      if (filterRef.current && !filterRef.current.contains(event.target as Node)) setFilterOpen(false);
+    }
+    document.addEventListener('mousedown', closeOnOutsideClick);
+    return () => document.removeEventListener('mousedown', closeOnOutsideClick);
+  }, []);
   const expertPaymentDetails = useMutation({
     mutationFn: (id: string) => api.get<ExpertPaymentDetails>(`/experts/${id}/payment-details`),
     onSuccess: (details) => {
@@ -161,20 +190,18 @@ export function BankingPage() {
     },
   });
   const columns: TableColumn<BankTransaction>[] = [
-    { key: 'date', label: '交易日期', render: (row) => <span className="small-text">{formatDate(row.transactionAt)}<br /><span className="mono">{row.bankAccount.bankName}</span></span> },
+    { key: 'date', label: '交易日期', render: (row) => <span className="small-text">{formatDate(row.transactionAt)}</span> },
+    { key: 'ownAccount', label: '本方银行账户', render: (row) => <span className="primary-cell"><strong>{row.bankAccount.bankName}</strong><small className="mono sensitive-value">{row.bankAccount.accountNumberMasked}</small></span> },
     { key: 'counterparty', label: '对方账户', render: (row) => <span className="primary-cell"><strong>{row.counterpartyName}</strong><small>{row.counterpartyBankName ?? '未登记银行'} · {row.counterpartyAccountMasked ?? '未登记账号'}</small><small>{row.nature}</small></span> },
-    { key: 'direction', label: '收支', render: (row) => <StatusChip value={row.direction} /> },
     { key: 'amount', label: '流水金额', className: 'number', render: (row) => <strong className={row.direction === 'IN' ? 'positive' : 'expense-text'}>{row.direction === 'IN' ? '+' : '−'}{formatMoney(row.amount)}</strong> },
-    { key: 'allocation', label: '关联对象 / 资金分类', render: (row) => row.allocations.some((item) => item.status === 'CONFIRMED') ? <span className="allocation-list">{row.allocations.filter((item) => item.status === 'CONFIRMED').map((item) => <small key={item.id}>{allocationSubject(item)} · {statusLabels[item.category] ?? item.category}</small>)}</span> : <span className="muted">尚未归类</span> },
+    { key: 'allocation', label: '关联对象', render: (row) => row.allocations.length ? <span className="allocation-list">{row.allocations.filter((item) => item.category === fundingCategory).map((item) => <small key={item.id}>{allocationSubject(item)}</small>)}</span> : <span className="muted">尚未关联</span> },
     { key: 'attachments', label: '附件列表', render: (row) => <LedgerAttachmentList objectType="BANK_TRANSACTION" objectId={row.id} attachments={row.attachments ?? []} /> },
     { key: 'status', label: '匹配状态', render: (row) => <StatusChip value={row.matchStatus} /> },
   ];
-  if (canEdit) columns.push({ key: 'action', label: '', render: (row) => {
+  if (canEdit) columns.push({ key: 'action', label: '操作', render: (row) => {
       return <span className="row-actions">
         <button className="table-action" onClick={() => {
           const allocation = row.allocations.find((item) => item.status === 'CONFIRMED');
-          setDirection(row.direction);
-          setCategory((allocation?.category as FundingCategory | undefined) ?? (row.direction === 'IN' ? 'SUPPORT_RECEIPT' : 'EXECUTION_PAYMENT'));
           setExpertId(allocation?.expertProfile?.id ?? '');
           setMembershipId(allocation?.memberDue?.membership.id ?? '');
           setCounterpartyName(row.counterpartyName);
@@ -199,6 +226,8 @@ export function BankingPage() {
     event.preventDefault();
     const body = formObject(event.currentTarget);
     body.transactionAt = body.transactionDate ?? '';
+    body.direction = config.direction;
+    body.category = fundingCategory;
     delete body.transactionDate;
     if (!body.counterpartyAccountNumber) delete body.counterpartyAccountNumber;
     save.mutate({ body, files: attachmentFiles });
@@ -210,8 +239,6 @@ export function BankingPage() {
     saveAccount.mutate(body);
   }
   function openNewTransaction() {
-    setDirection('IN');
-    setCategory('SUPPORT_RECEIPT');
     setExpertId('');
     setMembershipId('');
     setCounterpartyName('');
@@ -226,19 +253,62 @@ export function BankingPage() {
   const editingAllocation = editing?.allocations.find((item) => item.status === 'CONFIRMED');
   const editingAccount = accountEditor && accountEditor !== 'new' ? accountEditor : null;
   const memberPaymentOptions = (members.data ?? []).filter((item) => Number(item.outstandingAmount) > 0 || item.id === membershipId);
-  return <div className="page-enter">
-    <PageHeader eyebrow="业务台账 / 资金" title="银行日记账" description="按资金分类关联项目、专家或会员，保存后同步更新业务台账。" action={(user?.role === 'SYSTEM_ADMIN' || canEdit) ? <div className="button-group">{user?.role === 'SYSTEM_ADMIN' && <LedgerExportButton dataset="banking" fileName="银行日记账" filters={{ q }} sensitive />}{canManageBankAccounts && <button className="button secondary" onClick={() => setAccountManager(true)}><Landmark size={16} />本方账户管理</button>}{canEdit && <button className="button secondary" onClick={() => { setImportFile(null); setImportResult(null); importTransactions.reset(); setImportOpen(true); }}><Upload size={16} />模板导入</button>}{canEdit && <button className="button primary" onClick={openNewTransaction}><Plus size={17} />录入流水</button>}</div> : undefined} />
-    {notice && <div className="operation-banner">{notice}</div>}
-    <div className="toolbar"><SearchBar value={q} onChange={(value) => { setQ(value); setPage(1); }} placeholder="搜索对方账户、银行、性质或项目编码" /><span className="result-count">{transactions.data?.total ?? 0} 笔流水</span></div>
-    <section className="panel table-panel">{transactions.isLoading ? <LoadingState /> : transactions.error ? <ErrorState error={transactions.error} /> : <><DataTable columns={columns} rows={transactions.data?.items ?? []} rowKey={(row) => row.id} /><Pagination page={page} total={transactions.data?.total ?? 0} onPageChange={setPage} /></>}</section>
+  const selectedProject = projects.data?.find((item) => item.id === projectFilter)?.name;
+  const selectedMember = members.data?.find((item) => item.id === memberFilter)?.memberName;
+  const selectedExpert = experts.data?.find((item) => item.id === expertFilter)?.person.name;
+  const filterSummary = [
+    selectedProject && `项目：${selectedProject}`,
+    selectedMember && `会员：${selectedMember}`,
+    selectedExpert && `专家：${selectedExpert}`,
+    (transactionFrom || transactionTo) && `${transactionFrom ? formatDate(transactionFrom) : '起始不限'}至${transactionTo ? formatDate(transactionTo) : '结束不限'}`,
+    statusFilter && (statusFilter === 'ACTIVE' ? '有效' : '已作废'),
+  ].filter(Boolean).join(' · ');
 
-    <Modal open={transactionModal || Boolean(editing)} onClose={() => { setTransactionModal(false); setEditing(null); setAttachmentFiles([]); expertPaymentDetails.reset(); }} title={editing ? '编辑银行流水' : '录入银行流水'} description="先选择收支方向和资金分类，再填写对应业务信息。" size="large">
+  function openFilters() {
+    setDraftProject(projectFilter);
+    setDraftMember(memberFilter);
+    setDraftExpert(expertFilter);
+    setDraftStatus(statusFilter);
+    setDraftTransactionFrom(transactionFrom);
+    setDraftTransactionTo(transactionTo);
+    setFilterOpen(true);
+  }
+
+  function applyFilters(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setProjectFilter(draftProject);
+    setMemberFilter(draftMember);
+    setExpertFilter(draftExpert);
+    setStatusFilter(draftStatus);
+    setTransactionFrom(draftTransactionFrom);
+    setTransactionTo(draftTransactionTo);
+    setPage(1);
+    setFilterOpen(false);
+  }
+
+  return <div className="page-enter">
+    <PageHeader eyebrow="业务台账 / 银行日记账" title={config.title} description={config.description} action={(user?.role === 'SYSTEM_ADMIN' || canCreate) ? <div className="button-group">{user?.role === 'SYSTEM_ADMIN' && <LedgerExportButton dataset="banking" fileName={`银行日记账_${config.title}`} filters={{ bankCategory: fundingCategory, bankProjectId: projectFilter, bankMembershipId: memberFilter, bankExpertProfileId: expertFilter, transactionStatus: statusFilter, transactionFrom, transactionTo }} sensitive />}{canManageBankAccounts && <button className="button secondary" onClick={() => setAccountManager(true)}><Landmark size={16} />本方账户管理</button>}{canCreate && <button className="button secondary" onClick={() => { setImportFile(null); setImportResult(null); importTransactions.reset(); setImportOpen(true); }}><Upload size={16} />模板导入</button>}{canCreate && <button className="button primary" onClick={openNewTransaction}><Plus size={17} />录入流水</button>}</div> : undefined} />
+    {notice && <div className="operation-banner">{notice}</div>}
+    <div className="toolbar banking-toolbar"><div className={`expert-filter-popover banking-filter-popover${filterOpen ? ' open' : ''}`} ref={filterRef}>
+      <button type="button" className="expert-filter-trigger" aria-expanded={filterOpen} aria-haspopup="dialog" onClick={() => filterOpen ? setFilterOpen(false) : openFilters()}><Search size={16} /><span><strong>{filterSummary || '搜索与筛选流水'}</strong><small>{filterSummary ? '点击修改筛选条件' : `${category === 'MEMBER_DUE' ? '项目、会员' : category === 'EXPERT_FEE' ? '项目、专家' : '项目'}、交易日期、状态`}</small></span><SlidersHorizontal size={16} /></button>
+      {filterOpen && <form className="expert-filter-panel banking-filter-panel" role="dialog" aria-label="银行流水搜索与筛选" onSubmit={applyFilters}>
+        <div className="expert-filter-panel-heading"><span><strong>搜索与筛选</strong><small>未选择的条件默认不限</small></span><button type="button" onClick={() => { setDraftProject(''); setDraftMember(''); setDraftExpert(''); setDraftStatus(''); setDraftTransactionFrom(''); setDraftTransactionTo(''); }}><RotateCcw size={13} />清空条件</button></div>
+        <label><span>关联项目</span><SearchableSelect ariaLabel="按项目筛选" defaultValue={draftProject} disabled={projects.isLoading || projects.isError} placeholder="全部项目" searchPlaceholder="搜索项目编码或名称" onValueChange={setDraftProject} options={(projects.data ?? []).map((item) => ({ value: item.id, label: `${item.projectCode} · ${item.name}` }))} /></label>
+        {category === 'MEMBER_DUE' && <label><span>关联会员</span><SearchableSelect ariaLabel="按会员筛选" defaultValue={draftMember} disabled={members.isLoading || members.isError} placeholder="全部会员" searchPlaceholder="搜索会员或专委会" onValueChange={setDraftMember} options={(members.data ?? []).map((item) => ({ value: item.id, label: item.memberName, searchText: `${item.committee?.committeeCode ?? ''} ${item.committee?.name ?? ''}` }))} /></label>}
+        {category === 'EXPERT_FEE' && <label><span>关联专家</span><SearchableSelect ariaLabel="按专家筛选" defaultValue={draftExpert} disabled={experts.isLoading || experts.isError} placeholder="全部专家" searchPlaceholder="搜索专家姓名或单位" onValueChange={setDraftExpert} options={(experts.data ?? []).map((item) => ({ value: item.id, label: item.person.name, searchText: item.person.organizationName }))} /></label>}
+        <label><span>交易日期</span><span className="expert-filter-date-range"><DateInput key={`draft-from-${draftTransactionFrom}`} aria-label="交易日期起始时间" defaultValue={draftTransactionFrom} max={draftTransactionTo || undefined} onValueChange={setDraftTransactionFrom} /><em>至</em><DateInput key={`draft-to-${draftTransactionTo}`} aria-label="交易日期结束时间" defaultValue={draftTransactionTo} min={draftTransactionFrom || undefined} onValueChange={setDraftTransactionTo} /></span></label>
+        <label><span>状态</span><Select aria-label="流水状态筛选" value={draftStatus} onChange={(event) => setDraftStatus(event.target.value)}><option value="">全部状态</option><option value="ACTIVE">有效</option><option value="VOID">已作废</option></Select></label>
+        <div className="expert-filter-actions"><button type="button" className="button ghost" onClick={() => setFilterOpen(false)}>取消</button><button type="submit" className="button primary">应用筛选</button></div>
+      </form>}
+    </div><span className="result-count">{transactions.data?.total ?? 0} 笔流水</span></div>
+    <section className="panel table-panel">{transactions.isLoading ? <LoadingState /> : transactions.error ? <ErrorState error={transactions.error} /> : <><DataTable tableId={`banking-${fundingCategory}`} columns={columns} rows={transactions.data?.items ?? []} rowKey={(row) => row.id} /><Pagination page={page} total={transactions.data?.total ?? 0} onPageChange={setPage} /></>}</section>
+
+    <Modal open={transactionModal || Boolean(editing)} onClose={() => { setTransactionModal(false); setEditing(null); setAttachmentFiles([]); expertPaymentDetails.reset(); }} title={editing ? `编辑${config.title}流水` : `录入${config.title}流水`} description="资金分类和收支方向由当前页面固定。" size="large">
       <form key={editing?.id ?? 'new'} className="form-grid" onSubmit={submitTransaction}>
-        <Field label="收支方向"><Select name="direction" value={direction} onChange={(event) => { const value = event.target.value as 'IN' | 'OUT'; setDirection(value); setCategory(value === 'IN' ? 'SUPPORT_RECEIPT' : 'EXECUTION_PAYMENT'); setExpertId(''); setMembershipId(''); setCounterpartyName(''); setCounterpartyBankName(''); setCounterpartyAccountNumber(''); expertPaymentDetails.reset(); }}><option value="IN">收入</option><option value="OUT">支出</option></Select></Field>
-        <Field label="资金分类"><Select name="category" value={category} onChange={(event) => { const value = event.target.value as FundingCategory; setCategory(value); if (value !== 'EXPERT_FEE') setExpertId(''); if (value !== 'MEMBER_DUE') setMembershipId(''); setCounterpartyName(''); setCounterpartyBankName(''); setCounterpartyAccountNumber(''); expertPaymentDetails.reset(); }}>{direction === 'IN' ? <><option value="SUPPORT_RECEIPT">支持款收入</option><option value="MEMBER_DUE">会员会费收入</option></> : <><option value="EXECUTION_PAYMENT">执行款支出</option><option value="EXPERT_FEE">专家费支出</option></>}</Select></Field>
-        {category !== 'MEMBER_DUE' && <Field label="关联项目" span={category === 'EXPERT_FEE' ? 1 : 2}><SearchableSelect name="projectId" ariaLabel="关联项目" required defaultValue={editingAllocation?.project?.id ?? ''} disabled={projects.isLoading || projects.isError} placeholder="请选择关联项目" searchPlaceholder="搜索项目编码或名称" options={(projects.data ?? []).map((item) => ({ value: item.id, label: `${item.projectCode} · ${item.name}` }))} /></Field>}
+        <div className="form-section-label span-2"><span>{config.title}</span><small>{direction === 'IN' ? '收入流水' : '支出流水'}，资金分类由当前页面固定</small></div>
+        <Field label={category === 'MEMBER_DUE' ? '关联项目（可选）' : '关联项目'} span={category === 'MEMBER_DUE' || category === 'EXPERT_FEE' ? 1 : 2}><SearchableSelect name="projectId" ariaLabel="关联项目" required={category !== 'MEMBER_DUE'} defaultValue={editingAllocation?.project?.id ?? ''} disabled={projects.isLoading || projects.isError} placeholder={category === 'MEMBER_DUE' ? '可不选择项目' : '请选择关联项目'} searchPlaceholder="搜索项目编码或名称" options={(projects.data ?? []).map((item) => ({ value: item.id, label: `${item.projectCode} · ${item.name}` }))} /></Field>
         {category === 'EXPERT_FEE' && <Field label="专家"><SearchableSelect name="expertProfileId" ariaLabel="专家" required defaultValue={expertId} disabled={experts.isLoading || experts.isError || expertPaymentDetails.isPending} placeholder="请选择专家" searchPlaceholder="搜索专家姓名或单位" options={(experts.data ?? []).map((item) => ({ value: item.id, label: item.person.name, searchText: item.person.organizationName }))} onValueChange={(value) => { setExpertId(value); if (value) expertPaymentDetails.mutate(value); else { setCounterpartyName(''); setCounterpartyBankName(''); setCounterpartyAccountNumber(''); } }} /></Field>}
-        {category === 'MEMBER_DUE' && <Field label="会员" span={2} hint="会费将按应缴日期从早到晚自动冲抵"><SearchableSelect name="membershipId" ariaLabel="会员" required defaultValue={membershipId} disabled={members.isLoading || members.isError} placeholder="请选择有未缴会费的会员" searchPlaceholder="搜索会员、专委会或编码" options={memberPaymentOptions.map((item) => ({ value: item.id, label: `${item.memberName} · 未缴 ${formatMoney(item.outstandingAmount)}`, searchText: `${item.committee.committeeCode} ${item.committee.name}` }))} onValueChange={(value) => { setMembershipId(value); const member = members.data?.find((item) => item.id === value); if (member) setCounterpartyName(member.memberName); }} /></Field>}
+        {category === 'MEMBER_DUE' && <Field label="会员" hint="会费将按应缴日期从早到晚自动冲抵"><SearchableSelect name="membershipId" ariaLabel="会员" required defaultValue={membershipId} disabled={members.isLoading || members.isError} placeholder="请选择有未缴会费的会员" searchPlaceholder="搜索会员、专委会或编码" options={memberPaymentOptions.map((item) => ({ value: item.id, label: `${item.memberName} · 未缴 ${formatMoney(item.outstandingAmount)}`, searchText: `${item.committee?.committeeCode ?? ''} ${item.committee?.name ?? ''}` }))} onValueChange={(value) => { setMembershipId(value); const member = members.data?.find((item) => item.id === value); if (member) setCounterpartyName(member.memberName); }} /></Field>}
         <Field label="本方银行账户" span={2}><SearchableSelect name="bankAccountId" ariaLabel="本方银行账户" required defaultValue={editing?.bankAccountId ?? ''} disabled={accounts.isLoading || accounts.isError} placeholder="请选择本方银行账户" searchPlaceholder="搜索银行名称或账号尾号" options={(accounts.data ?? []).map((item) => ({ value: item.id, label: `${item.bankName} · ${item.accountNumberMasked}` }))} /></Field>
         <div className="form-section-label span-2"><span>对方账户</span><small>以下信息用于识别本笔流水的交易对方</small></div>
         <Field label="对方账户名称" span={2}><Input name="counterpartyName" required value={counterpartyName} onChange={(event) => setCounterpartyName(event.target.value)} /></Field>
@@ -257,8 +327,8 @@ export function BankingPage() {
     <Modal open={importOpen} onClose={() => setImportOpen(false)} title="模板导入银行流水" description="下载模板后使用 Excel 填写，并保持 CSV 格式上传。" size="wide">
       <div className="import-panel">
         <div className="import-instructions">
-          <p>交易日期填写“年/月/日”。资金分类仅支持：支持款收入、会员会费收入、执行款支出、专家费支出。</p>
-          <p>项目使用项目编码匹配；专家费只需填写专家姓名和专家身份证号，对方账户、开户行及银行卡号会从专家库自动带入；会员会费填写专委会编码和会员姓名。单次最多 1000 行。</p>
+          <p>交易日期填写“年/月/日”。资金分类仅支持：支持款收入、会费收入、执行款支出、专家费支出。</p>
+          <p>项目使用项目编码匹配，会费收入的项目编码可不填；专家费只需填写专家姓名和专家身份证号，对方账户、开户行及银行卡号会从专家库自动带入；会费收入填写专委会编码和会员姓名。单次最多 1000 行。</p>
         </div>
         <button type="button" className="button secondary" disabled={downloadTemplate.isPending} onClick={() => downloadTemplate.mutate()}><Download size={16} />下载导入模板</button>
         <Field label="选择填写后的 CSV 文件" hint="文件不超过 2MB"><Input type="file" accept=".csv,text/csv" onChange={(event) => { setImportFile(event.target.files?.[0] ?? null); setImportResult(null); importTransactions.reset(); }} /></Field>
@@ -295,7 +365,10 @@ export function BankingPage() {
 }
 
 function allocationSubject(allocation: BankAllocation) {
-  if (allocation.memberDue) return `${allocation.memberDue.membership.memberName} · ${allocation.memberDue.periodLabel ?? allocation.memberDue.dueCode}`;
+  if (allocation.memberDue) {
+    const memberDue = `${allocation.memberDue.membership.memberName} · ${allocation.memberDue.periodLabel ?? allocation.memberDue.dueCode}`;
+    return allocation.project ? `${memberDue} · ${allocation.project.projectCode}` : memberDue;
+  }
   if (allocation.expertProfile) return `${allocation.project?.projectCode ?? '未关联项目'} · ${allocation.expertProfile.person.name}`;
   return allocation.project?.projectCode ?? '未关联对象';
 }

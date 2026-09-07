@@ -7,6 +7,7 @@ export interface AuthUser {
   displayName: string;
   role: UserRole;
   projectManagerId: string | null;
+  projectIds: string[];
   permissions: { resource: PermissionResource; level: PermissionLevel }[];
 }
 

@@ -20,8 +20,11 @@ const statusLabels: Record<string, string> = {
   UNARCHIVED: '未归档', ARCHIVED: '已归档',
   SIGNED: '有效', VOID: '已作废', TERMINATED: '已终止',
   NORMAL: '正常', ISSUED: '已开票', RECEIVED: '已收票',
+  SUPPORT_RECEIPT_ISSUED: '支持款收入票据', MEMBER_DUE_ISSUED: '会费收入票据',
+  EXECUTION_PAYMENT_RECEIVED: '执行款支出票据', EXPERT_FEE_RECEIVED: '专家费支出票据',
   IN: '收入', OUT: '支出', MATCHED: '已匹配', UNMATCHED: '未匹配', EXCLUDED: '已作废',
-  SUPPORT_RECEIPT: '支持款收入', MEMBER_DUE: '会员会费收入', EXECUTION_PAYMENT: '执行款支出', EXPERT_FEE: '专家费支出',
+  SUPPORT_RECEIPT: '支持款收入', MEMBER_DUE: '会费收入', EXECUTION_PAYMENT: '执行款支出', EXPERT_FEE: '专家费支出',
+  COLLECTED: '已归集', NOT_APPLICABLE: '无需归集',
   SUPPORT: '支持协议', EXECUTION: '执行协议',
   PENDING: '待复核', APPROVED: '已通过', REJECTED: '已驳回', INACTIVE: '已停用',
   UNPAID: '未缴', PARTIAL: '部分缴纳', PAID: '已缴', WAIVED: '已免除',
@@ -42,6 +45,7 @@ export class ExportsService {
       : dataset === ExportDataset.CONTRACTS ? await this.contracts(workbook, query)
         : dataset === ExportDataset.BANKING ? await this.banking(workbook, query)
           : dataset === ExportDataset.INVOICES ? await this.invoices(workbook, query)
+            : dataset === ExportDataset.DONATION_RECEIPTS ? await this.donationReceipts(workbook, query)
             : dataset === ExportDataset.SUPPORTERS ? await this.organizations(workbook, query, 'SUPPORTER')
               : dataset === ExportDataset.EXECUTORS ? await this.organizations(workbook, query, 'EXECUTOR')
                 : dataset === ExportDataset.EXPERTS ? await this.experts(workbook, query)
@@ -73,6 +77,7 @@ export class ExportsService {
       platform: query.platform,
       nature: query.nature,
       projectType: query.projectType,
+      pmUserId: query.pmUserId,
       publishedFrom: query.publishedFrom,
       publishedTo: query.publishedTo,
       status: query.projectStatus,
@@ -146,7 +151,19 @@ export class ExportsService {
   }
 
   private async banking(workbook: ExcelJS.Workbook, query: ExportQueryDto) {
+    if (query.transactionFrom && query.transactionTo && query.transactionFrom > query.transactionTo) throw new BadRequestException('交易日期结束时间不能早于起始时间');
     const where: Prisma.BankTransactionWhereInput = {
+      ...(query.transactionStatus ? { settlementApplicable: query.transactionStatus === 'ACTIVE' } : {}),
+      ...((query.transactionFrom || query.transactionTo) ? { transactionAt: {
+        ...(query.transactionFrom ? { gte: new Date(query.transactionFrom) } : {}),
+        ...(query.transactionTo ? { lte: new Date(query.transactionTo) } : {}),
+      } } : {}),
+      ...((query.bankCategory || query.bankProjectId || query.bankExpertProfileId || query.bankMembershipId) ? { allocations: { some: {
+        ...(query.bankCategory ? { category: query.bankCategory } : {}),
+        ...(query.bankProjectId ? { projectId: query.bankProjectId } : {}),
+        ...(query.bankExpertProfileId ? { expertProfileId: query.bankExpertProfileId } : {}),
+        ...(query.bankMembershipId ? { memberDue: { membershipId: query.bankMembershipId } } : {}),
+      } } } : {}),
       ...(query.q ? { OR: [
         { transactionNo: { contains: query.q, mode: 'insensitive' } }, { counterpartyName: { contains: query.q, mode: 'insensitive' } },
         { counterpartyBankName: { contains: query.q, mode: 'insensitive' } }, { nature: { contains: query.q, mode: 'insensitive' } },
@@ -196,25 +213,40 @@ export class ExportsService {
   }
 
   private async invoices(workbook: ExcelJS.Workbook, query: ExportQueryDto) {
+    if (query.issuedFrom && query.issuedTo && query.issuedFrom > query.issuedTo) throw new BadRequestException('发票日期结束时间不能早于起始时间');
     const where: Prisma.InvoiceWhereInput = {
-      ...(query.direction ? { direction: query.direction } : {}),
+      ...(query.invoiceCategory ? { category: query.invoiceCategory } : {}),
+      ...(query.invoiceStatus ? { status: query.invoiceStatus } : {}),
+      ...(query.invoiceCollectionStatus ? { collectionStatus: query.invoiceCollectionStatus } : {}),
+      ...(query.invoiceProjectId ? { projectId: query.invoiceProjectId } : {}),
+      ...(query.invoiceMembershipId ? { membershipId: query.invoiceMembershipId } : {}),
+      ...(query.invoiceCommitteeId ? { membership: { committeeId: query.invoiceCommitteeId } } : {}),
+      ...((query.issuedFrom || query.issuedTo) ? { issuedOn: {
+        ...(query.issuedFrom ? { gte: new Date(query.issuedFrom) } : {}),
+        ...(query.issuedTo ? { lte: new Date(query.issuedTo) } : {}),
+      } } : {}),
       ...(query.q ? { OR: [
         { invoiceType: { contains: query.q, mode: 'insensitive' } }, { invoicePlatform: { contains: query.q, mode: 'insensitive' } },
+        { payerName: { contains: query.q, mode: 'insensitive' } },
         { buyerName: { contains: query.q, mode: 'insensitive' } }, { project: { projectCode: { contains: query.q, mode: 'insensitive' } } },
         { project: { name: { contains: query.q, mode: 'insensitive' } } },
+        { membership: { memberName: { contains: query.q, mode: 'insensitive' } } },
+        { expertProfile: { person: { name: { contains: query.q, mode: 'insensitive' } } } },
       ] } : {}),
     };
     await this.assertExportSize(this.prisma.invoice.count({ where }));
-    const items = await this.prisma.invoice.findMany({ where, include: { project: true }, orderBy: { issuedOn: 'desc' } });
+    const items = await this.prisma.invoice.findMany({ where, include: { project: true, membership: { include: { committee: true } }, expertProfile: { include: { person: true } } }, orderBy: { issuedOn: 'desc' } });
     const attachments = await this.attachmentNames('INVOICE', items.map((item) => item.id));
     const rows = items.map((item): ExportRow => ({
-      direction: label(item.direction), projectCode: item.project.projectCode, projectName: item.project.name, issuedOn: item.issuedOn,
+      category: label(item.category), projectCode: item.project?.projectCode ?? '', projectName: item.project?.name ?? '',
+      payerName: item.payerName ?? '', memberName: item.membership?.memberName ?? '', committeeName: item.membership?.committee?.name ?? '', expertName: item.expertProfile?.person.name ?? '', issuedOn: item.issuedOn,
       invoiceType: item.invoiceType, invoicePlatform: item.invoicePlatform, buyerName: item.buyerName,
       amountExcludingTax: Number(item.amountExcludingTax), taxRate: Number(item.taxRate), taxAmount: Number(item.taxAmount),
-      totalAmount: Number(item.totalAmount), kind: label(item.kind), status: label(item.status), attachments: attachments[item.id] ?? '',
+      totalAmount: Number(item.totalAmount), collectionStatus: item.collectionStatus === 'PENDING' ? '待归集' : label(item.collectionStatus), kind: label(item.kind), status: label(item.status), attachments: attachments[item.id] ?? '',
     }));
     this.addSheet(workbook, '发票台账', [
-      textColumn('direction', '发票方向', 12), textColumn('projectCode', '关联项目编码', 18), textColumn('projectName', '关联项目', 28),
+      textColumn('category', '发票分类', 20), textColumn('projectCode', '关联项目编码', 18), textColumn('projectName', '关联项目', 28),
+      textColumn('payerName', '交款人姓名', 20), textColumn('memberName', '关联会员', 20), textColumn('committeeName', '所属专委会', 24), textColumn('collectionStatus', '归集状态', 12), textColumn('expertName', '关联专家', 18),
       dateColumn('issuedOn', '开票日期'), textColumn('invoiceType', '开票类型', 16), textColumn('invoicePlatform', '开票平台', 18),
       textColumn('buyerName', '购买方/销售方名称', 28), moneyColumn('amountExcludingTax', '金额'), percentColumn('taxRate', '税率'),
       moneyColumn('taxAmount', '税额'), moneyColumn('totalAmount', '价税合计'), textColumn('kind', '票种', 10), textColumn('status', '状态', 10),
@@ -233,38 +265,103 @@ export class ExportsService {
     await this.assertExportSize(this.prisma.organization.count({ where }));
     const items = await this.prisma.organization.findMany({
       where,
-      include: { owner: true, roles: true, contracts: { where: { status: 'SIGNED' }, select: { amount: true, contractType: true } } },
+      include: {
+        owner: true,
+        roles: true,
+        contracts: { where: { status: 'SIGNED' }, select: { amount: true, contractType: true } },
+        serviceCapabilities: { include: { capability: true }, orderBy: { capability: { sortOrder: 'asc' } } },
+      },
       orderBy: { createdAt: 'desc' },
     });
+    const [licenses, commitments, legalRepIds] = roleType === 'EXECUTOR' ? await Promise.all([
+      this.attachmentNames('EXECUTOR_BUSINESS_LICENSE', items.map((item) => item.id)),
+      this.attachmentNames('EXECUTOR_COMMITMENT', items.map((item) => item.id)),
+      this.attachmentNames('EXECUTOR_LEGAL_REP_ID', items.map((item) => item.id)),
+    ]) : [{}, {}, {}];
     const rows = items.map((item): ExportRow => ({
       organizationCode: item.organizationCode, name: item.name, platform: item.platform,
       joinedOn: item.roles.find((role) => role.roleType === roleType)?.joinedOn ?? null,
       owner: item.owner.displayName, contactName: item.contactName ?? '', contactPhone: item.contactPhone ?? '',
       cumulativeAmount: sum(item.contracts.filter((contract) => roleType === 'SUPPORTER' ? contract.contractType === 'SUPPORT' : contract.contractType === 'EXECUTION').map((contract) => contract.amount)),
+      capabilities: item.serviceCapabilities.map((selection) => selection.capability.isOther && item.executorOtherCapabilityNote ? `其他：${item.executorOtherCapabilityNote}` : selection.capability.name).join('、'),
+      businessLicense: licenses[item.id] ?? '', commitment: commitments[item.id] ?? '', legalRepId: legalRepIds[item.id] ?? '',
       reviewStatus: label(item.roles.find((role) => role.roleType === roleType)?.reviewStatus), status: item.status === 'ACTIVE' ? '启用' : '停用',
     }));
     const title = roleType === 'SUPPORTER' ? '支持方库' : '执行方库';
-    this.addSheet(workbook, title, [
+    const columns = roleType === 'SUPPORTER' ? [
       textColumn('organizationCode', '机构编号', 18), textColumn('name', '机构名称', 30), textColumn('platform', '入库平台', 20),
       dateColumn('joinedOn', '入库时间'), textColumn('owner', '负责PM', 14), textColumn('contactName', '联系人', 16),
       textColumn('contactPhone', '联系电话', 18), moneyColumn('cumulativeAmount', '累计协议金额'), textColumn('reviewStatus', '复核状态', 12), textColumn('status', '状态', 10),
-    ], rows);
+    ] : [
+      textColumn('organizationCode', '执行方编号', 18), textColumn('name', '供应商名称', 30), dateColumn('joinedOn', '入库时间'),
+      textColumn('owner', '介绍人', 14), textColumn('contactName', '联系人', 16), textColumn('contactPhone', '联系电话', 18),
+      textColumn('capabilities', '服务能力', 38), textColumn('businessLicense', '营业执照', 32), textColumn('commitment', '承诺书', 32),
+      textColumn('legalRepId', '法人身份证复印件', 32), moneyColumn('cumulativeAmount', '累计合作金额'), textColumn('status', '状态', 10),
+    ];
+    this.addSheet(workbook, title, columns, rows);
     return { title, rowCount: rows.length };
   }
 
+  private async donationReceipts(workbook: ExcelJS.Workbook, query: ExportQueryDto) {
+    if (query.donationIssuedFrom && query.donationIssuedTo && query.donationIssuedFrom > query.donationIssuedTo) {
+      throw new BadRequestException('捐赠票据日期结束时间不能早于起始时间');
+    }
+    const where: Prisma.DonationReceiptWhereInput = {
+      ...(query.donationProjectId ? { projectId: query.donationProjectId } : {}),
+      ...(query.donationDonorId ? { donorId: query.donationDonorId } : {}),
+      ...(query.donationStatus ? { status: query.donationStatus } : {}),
+      ...((query.donationIssuedFrom || query.donationIssuedTo) ? { issuedOn: {
+        ...(query.donationIssuedFrom ? { gte: new Date(query.donationIssuedFrom) } : {}),
+        ...(query.donationIssuedTo ? { lte: new Date(query.donationIssuedTo) } : {}),
+      } } : {}),
+      ...(query.q ? { OR: [
+        { receiptNumber: { contains: query.q, mode: 'insensitive' } },
+        { project: { OR: [{ projectCode: { contains: query.q, mode: 'insensitive' } }, { name: { contains: query.q, mode: 'insensitive' } }] } },
+        { donor: { name: { contains: query.q, mode: 'insensitive' } } },
+      ] } : {}),
+    };
+    await this.assertExportSize(this.prisma.donationReceipt.count({ where }));
+    const items = await this.prisma.donationReceipt.findMany({ where, include: { project: true, donor: true }, orderBy: { issuedOn: 'desc' } });
+    const attachments = await this.attachmentNames('DONATION_RECEIPT', items.map((item) => item.id));
+    const rows = items.map((item): ExportRow => ({
+      receiptNumber: item.receiptNumber, projectCode: item.project.projectCode, projectName: item.project.name,
+      donorName: item.donor.name, issuedOn: item.issuedOn, amount: Number(item.amount),
+      status: item.status === 'NORMAL' ? '正常' : '已作废', remark: item.remark ?? '', attachments: attachments[item.id] ?? '',
+    }));
+    this.addSheet(workbook, '捐赠票据台账', [
+      textColumn('receiptNumber', '票据编号', 22), textColumn('projectCode', '项目编码', 20), textColumn('projectName', '项目名称', 28),
+      textColumn('donorName', '捐赠方', 28), dateColumn('issuedOn', '开具日期'), moneyColumn('amount', '票据金额'),
+      textColumn('status', '状态', 12), textColumn('remark', '备注', 32), textColumn('attachments', '附件列表', 40),
+    ], rows);
+    return { title: '捐赠票据台账', rowCount: rows.length };
+  }
+
   private async experts(workbook: ExcelJS.Workbook, query: ExportQueryDto) {
+    if (query.paymentFrom && query.paymentTo && query.paymentFrom > query.paymentTo) {
+      throw new BadRequestException('专家费统计结束日期不能早于起始日期');
+    }
     const where: Prisma.ExpertProfileWhereInput = {
       ...(query.reviewStatus ? { reviewStatus: query.reviewStatus } : {}),
       ...(query.recordStatus ? { status: query.recordStatus } : {}),
-      ...(query.q ? { person: { OR: [
-        { name: { contains: query.q, mode: 'insensitive' } }, { organizationName: { contains: query.q, mode: 'insensitive' } },
-        { department: { contains: query.q, mode: 'insensitive' } },
-      ] } } : {}),
+      ...(query.pmUserId ? { formOwnerId: query.pmUserId } : {}),
+      ...(query.q ? { person: { name: { contains: query.q, mode: 'insensitive' } } } : {}),
     };
     await this.assertExportSize(this.prisma.expertProfile.count({ where }));
     const items = await this.prisma.expertProfile.findMany({
       where,
-      include: { person: true, formOwner: true, reviewer: true },
+      include: {
+        person: true, formOwner: true, reviewer: true,
+        allocations: {
+          where: {
+            category: 'EXPERT_FEE', status: 'CONFIRMED',
+            ...(query.paymentFrom || query.paymentTo ? { bankTransaction: { transactionAt: {
+              ...(query.paymentFrom ? { gte: new Date(query.paymentFrom) } : {}),
+              ...(query.paymentTo ? { lte: new Date(query.paymentTo) } : {}),
+            } } } : {}),
+          },
+          select: { allocatedAmount: true, bankTransaction: { select: { transactionAt: true } } },
+        },
+      },
       orderBy: { joinedOn: 'desc' },
     });
     const credentials = await this.attachmentNames('EXPERT_CREDENTIAL', items.map((item) => item.id));
@@ -274,6 +371,8 @@ export class ExportsService {
       bankAccount: this.decrypt(item.bankAccountEncrypted), credentials: credentials[item.id] ?? '', joinedOn: item.joinedOn,
       email: item.person.email ?? '', department: item.person.department ?? '', position: item.person.position ?? '',
       formOwner: item.formOwner.displayName, reviewer: item.reviewer?.displayName ?? '',
+      paymentCount: item.allocations.length,
+      paymentAmount: sum(item.allocations.map((allocation) => allocation.allocatedAmount)),
       status: item.status === 'INACTIVE' ? '已停用' : item.reviewStatus === 'APPROVED' ? '已通过' : '待复核',
     }));
     this.addSheet(workbook, '专家库', [
@@ -281,7 +380,8 @@ export class ExportsService {
       textColumn('phone', '手机号', 18), textColumn('idNumber', '身份证号码', 22), textColumn('bankName', '开户行', 24),
       textColumn('bankAccount', '银行账号', 24), textColumn('credentials', '职称证明/工作证/医师执业证', 40), dateColumn('joinedOn', '入库时间'),
       textColumn('email', '邮箱', 28), textColumn('department', '专业/科室', 18), textColumn('position', '职务', 16),
-      textColumn('formOwner', '填表人-PM', 16), textColumn('reviewer', '复核人', 16), textColumn('status', '状态', 12),
+      textColumn('formOwner', '填表人-PM', 16), numberColumn('paymentCount', '累计支付次数', 14), moneyColumn('paymentAmount', '支付总额', 18),
+      textColumn('reviewer', '复核人', 16), textColumn('status', '状态', 12),
     ], rows);
     return { title: '专家库_完整信息', rowCount: rows.length, sensitiveFields: ['phone', 'idNumber', 'bankAccount'] };
   }
@@ -290,7 +390,9 @@ export class ExportsService {
     const where: Prisma.MembershipWhereInput = {
       ...(query.committeeId ? { committeeId: query.committeeId } : {}),
       ...(query.q ? { OR: [
-        { memberName: { contains: query.q, mode: 'insensitive' } }, { committee: { name: { contains: query.q, mode: 'insensitive' } } },
+        { memberName: { contains: query.q, mode: 'insensitive' } }, { organizationName: { contains: query.q, mode: 'insensitive' } },
+        { department: { contains: query.q, mode: 'insensitive' } }, { email: { contains: query.q, mode: 'insensitive' } },
+        { committee: { name: { contains: query.q, mode: 'insensitive' } } },
       ] } : {}),
     };
     await this.assertExportSize(this.prisma.membership.count({ where }));
@@ -299,6 +401,7 @@ export class ExportsService {
       include: {
         committee: true, pm: true,
         dues: { include: { allocations: { where: { status: 'CONFIRMED' }, select: { allocatedAmount: true, confirmedAt: true } } }, orderBy: [{ dueOn: 'desc' }, { createdAt: 'desc' }] },
+        invoices: { where: { category: 'MEMBER_DUE_ISSUED', collectionStatus: 'COLLECTED', status: 'NORMAL' }, select: { totalAmount: true, kind: true } },
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -306,26 +409,32 @@ export class ExportsService {
     const memberRows = items.map((item): ExportRow => {
       const dueAmount = sum(item.dues.filter((due) => due.status !== 'WAIVED').map((due) => due.amountDue));
       const paidAmount = item.dues.reduce((total, due) => total + sum(due.allocations.map((allocation) => allocation.allocatedAmount)), 0);
+      const invoicedAmount = item.invoices.reduce((total, invoice) => total + Number(invoice.totalAmount) * (invoice.kind === 'RED' ? -1 : 1), 0);
       return {
         memberName: item.memberName, memberType: item.memberType, memberPosition: item.memberPosition ?? '',
-        committeeCode: item.committee.committeeCode, committeeName: item.committee.name, pm: item.pm.displayName,
-        joinedOn: item.joinedOn, certificateIssued: item.certificateIssued ? '是' : '否', dueCount: item.dues.length,
-        dueAmount, paidAmount, outstandingAmount: Math.max(0, dueAmount - paidAmount), status: item.status === 'ACTIVE' ? '启用' : '停用',
+        organizationName: item.organizationName ?? '', department: item.department ?? '', idNumber: this.decrypt(item.idNumberEncrypted), phone: this.decrypt(item.phoneEncrypted), email: item.email ?? '',
+        committeeCode: item.committee?.committeeCode ?? '', committeeName: item.committee?.name ?? '', pm: item.pm.displayName,
+        committeeMemberStatus: item.committee ? (item.committeeMemberStatus === 'LEFT_OFFICE' ? '离任' : '在任') : '未加入专委会',
+        committeeTerm: item.committeeTerm ?? '', joinedOn: item.joinedOn,
+        certificateIssued: item.certificateIssued ? '是' : '否', appointmentLetterIssued: item.appointmentLetterIssued ? '是' : '否', dueCount: item.dues.length,
+        dueAmount, paidAmount, invoicedAmount, outstandingAmount: Math.max(0, dueAmount - paidAmount), status: item.status === 'ACTIVE' ? '启用' : '停用',
         attachments: attachments[item.id] ?? '',
       };
     });
     this.addSheet(workbook, '会员库', [
       textColumn('memberName', '会员名称', 20), textColumn('memberType', '会员类别', 16), textColumn('memberPosition', '会员职务', 16),
+      textColumn('organizationName', '单位', 26), textColumn('department', '科室', 18), textColumn('idNumber', '身份证号', 22), textColumn('phone', '手机号', 16), textColumn('email', '邮箱', 24),
       textColumn('committeeCode', '专委会编码', 18), textColumn('committeeName', '所属专委会', 28), textColumn('pm', 'PM', 14),
-      dateColumn('joinedOn', '入会日期'), textColumn('certificateIssued', '是否发放会员证书', 18), numberColumn('dueCount', '会费笔数', 12),
-      moneyColumn('dueAmount', '应收会费'), moneyColumn('paidAmount', '实收会费'), moneyColumn('outstandingAmount', '未收会费'),
+      textColumn('committeeMemberStatus', '专委会任职状态', 16), numberColumn('committeeTerm', '届次', 10),
+      dateColumn('joinedOn', '入会日期'), textColumn('certificateIssued', '是否发放会员证书', 18), textColumn('appointmentLetterIssued', '是否发放委员聘书', 18), numberColumn('dueCount', '会费笔数', 12),
+      moneyColumn('dueAmount', '应收会费'), moneyColumn('paidAmount', '实收会费'), moneyColumn('invoicedAmount', '已开票会费'), moneyColumn('outstandingAmount', '未收会费'),
       textColumn('status', '状态', 10), textColumn('attachments', '附件列表', 40),
     ], memberRows);
     const dueRows = items.flatMap((item) => item.dues.map((due): ExportRow => {
       const paid = sum(due.allocations.map((allocation) => allocation.allocatedAmount));
       const lastPaidAt = due.allocations.map((allocation) => allocation.confirmedAt).filter((value): value is Date => Boolean(value)).sort((a, b) => b.getTime() - a.getTime())[0] ?? null;
       return {
-        memberName: item.memberName, committeeCode: item.committee.committeeCode, committeeName: item.committee.name,
+        memberName: item.memberName, committeeCode: item.committee?.committeeCode ?? '', committeeName: item.committee?.name ?? '',
         dueCode: due.dueCode, periodLabel: due.periodLabel ?? '', amountDue: Number(due.amountDue), amountPaid: paid,
         outstanding: due.status === 'WAIVED' ? 0 : Math.max(0, Number(due.amountDue) - paid), dueOn: due.dueOn, lastPaidAt, status: label(due.status),
       };
@@ -336,12 +445,12 @@ export class ExportsService {
       moneyColumn('amountPaid', '实收金额'), moneyColumn('outstanding', '未收金额'), dateColumn('dueOn', '应缴日期'),
       dateColumn('lastPaidAt', '最近收款日期'), textColumn('status', '状态', 12),
     ], dueRows);
-    return { title: '会员库', rowCount: memberRows.length };
+    return { title: '会员库', rowCount: memberRows.length, sensitiveFields: ['idNumber', 'phone'] };
   }
 
   private createWorkbook(dataset: ExportDataset) {
     const workbook = new ExcelJS.Workbook();
-    workbook.creator = '项目账册';
+    workbook.creator = 'PMS 项目管理系统';
     workbook.created = new Date();
     workbook.modified = new Date();
     workbook.subject = `筛选导出：${dataset}`;

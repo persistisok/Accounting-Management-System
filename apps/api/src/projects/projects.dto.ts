@@ -21,6 +21,9 @@ export class ProjectListQueryDto extends ListQueryDto {
   @IsOptional() @IsString() @MaxLength(50)
   projectType?: string;
 
+  @IsOptional() @IsUUID()
+  pmUserId?: string;
+
   @IsOptional() @IsDateString()
   publishedFrom?: string;
 

@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
@@ -25,7 +25,7 @@ export class ProjectsController {
 
   @Post()
   @Roles('SYSTEM_ADMIN', 'ADMIN', 'PM')
-  @RequirePermission('PROJECTS', 'EDIT')
+  @RequirePermission('PROJECTS', 'ENTRY')
   create(@Body() dto: CreateProjectDto, @CurrentUser() user: AuthUser) {
     return this.projects.create(dto, user.id, user);
   }
@@ -39,6 +39,12 @@ export class ProjectsController {
   @RequirePermission('PROJECTS', 'EDIT')
   update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateProjectDto, @CurrentUser() user: AuthUser) {
     return this.projects.update(id, dto, user.id, user);
+  }
+
+  @Delete(':id')
+  @Roles('SYSTEM_ADMIN')
+  remove(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: AuthUser) {
+    return this.projects.remove(id, user.id);
   }
 
   @Post(':id/status-request')

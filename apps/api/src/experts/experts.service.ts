@@ -4,7 +4,17 @@ import { AuditService } from '../audit/audit.service';
 import { SensitiveDataService } from '../common/sensitive-data.service';
 import { PrismaService } from '../prisma.service';
 import type { AuthUser } from '../common/current-user.decorator';
+import { normalizeImportDate, parseCsv } from '../common/csv-import';
 import { CreateExpertDto, ExpertListQueryDto, ReviewExpertDto, UpdateExpertDto } from './experts.dto';
+
+const EXPERT_IMPORT_HEADERS = ['姓名', '单位', '职称', '职务', '专业/科室', '邮箱', '手机', '身份证号码', '开户行', '银行账号', '入库时间', '对接PM'] as const;
+
+export interface ExpertImportResult {
+  total: number;
+  successCount: number;
+  failureCount: number;
+  errors: Array<{ row: number; message: string }>;
+}
 
 @Injectable()
 export class ExpertsService {
@@ -15,15 +25,16 @@ export class ExpertsService {
   ) {}
 
   async list(query: ExpertListQueryDto, user?: AuthUser) {
+    if (query.paymentFrom && query.paymentTo && query.paymentFrom > query.paymentTo) {
+      throw new BadRequestException('专家费统计结束日期不能早于起始日期');
+    }
     const where: Prisma.ExpertProfileWhereInput = {
       ...(query.reviewStatus ? { reviewStatus: query.reviewStatus } : {}),
       ...(query.status ? { status: query.status } : {}),
-      ...(user?.role === 'PM' ? { formOwnerId: user.projectManagerId ?? '__unbound_pm__' } : {}),
-      ...(query.q ? { person: { OR: [
-        { name: { contains: query.q, mode: 'insensitive' } },
-        { organizationName: { contains: query.q, mode: 'insensitive' } },
-        { department: { contains: query.q, mode: 'insensitive' } },
-      ] } } : {}),
+      ...(user?.role === 'PM'
+        ? { formOwnerId: user.projectManagerId ?? '__unbound_pm__' }
+        : query.pmUserId ? { formOwnerId: query.pmUserId } : {}),
+      ...(query.q ? { person: { name: { contains: query.q, mode: 'insensitive' } } } : {}),
     };
     const [items, total] = await this.prisma.$transaction([
       this.prisma.expertProfile.findMany({
@@ -48,9 +59,28 @@ export class ExpertsService {
       where: { objectType: 'EXPERT_CREDENTIAL', objectId: { in: items.map((item) => item.id) } },
       orderBy: { createdAt: 'desc' },
     });
+    const expertIds = items.map((item) => item.id);
+    const paymentStats = expertIds.length ? await this.prisma.bankAllocation.groupBy({
+      by: ['expertProfileId'],
+      where: {
+        expertProfileId: { in: expertIds }, category: 'EXPERT_FEE', status: 'CONFIRMED',
+        ...(query.paymentFrom || query.paymentTo ? { bankTransaction: { transactionAt: {
+          ...(query.paymentFrom ? { gte: new Date(query.paymentFrom) } : {}),
+          ...(query.paymentTo ? { lte: new Date(query.paymentTo) } : {}),
+        } } } : {}),
+      },
+      _count: { _all: true },
+      _sum: { allocatedAmount: true },
+    }) : [];
+    const paymentStatsByExpert = new Map(paymentStats.map((item) => [item.expertProfileId, {
+      count: item._count._all,
+      amount: item._sum.allocatedAmount?.toFixed(2) ?? '0.00',
+    }]));
     return {
       items: items.map((item) => ({
         ...item,
+        paymentCount: paymentStatsByExpert.get(item.id)?.count ?? 0,
+        paymentAmount: paymentStatsByExpert.get(item.id)?.amount ?? '0.00',
         credentials: credentials.filter((credential) => credential.objectId === item.id).map((credential) => ({
           id: credential.id,
           fileName: credential.fileName,
@@ -60,15 +90,99 @@ export class ExpertsService {
         })),
       })),
       total,
+      paymentFrom: query.paymentFrom ?? null,
+      paymentTo: query.paymentTo ?? null,
     };
   }
 
   options(user?: AuthUser) {
     return this.prisma.expertProfile.findMany({
-      where: { reviewStatus: 'APPROVED', status: 'ACTIVE', ...(user?.role === 'PM' ? { formOwnerId: user.projectManagerId ?? '__unbound_pm__' } : {}) },
+      where: {
+        reviewStatus: 'APPROVED', status: 'ACTIVE',
+        ...(user?.role === 'PM' ? { formOwnerId: user.projectManagerId ?? '__unbound_pm__' } : {}),
+      },
       select: { id: true, person: { select: { name: true, organizationName: true } } },
       orderBy: { person: { name: 'asc' } },
     });
+  }
+
+  importTemplate() {
+    const example = ['张三', '示例医院', '主任医师', '科室主任', '心内科', 'zhangsan@example.com', '13800138000', '310101199001011234', '中国银行上海分行', '6222000000000000', '2026/08/18', '张项目'];
+    return Buffer.from(`\uFEFF${EXPERT_IMPORT_HEADERS.join(',')}\r\n${example.join(',')}\r\n`, 'utf8');
+  }
+
+  async importExperts(file: { buffer: Buffer; originalname: string }, user: AuthUser): Promise<ExpertImportResult> {
+    if (!file.originalname.toLowerCase().endsWith('.csv')) throw new BadRequestException('仅支持 CSV 格式的专家导入文件');
+    const rows = parseCsv(file.buffer.toString('utf8').replace(/^\uFEFF/, '')).filter((row) => row.some((cell) => cell.trim()));
+    if (!rows.length) throw new BadRequestException('CSV 文件为空');
+    const headers = rows[0]!.map((header) => header.trim());
+    if (headers.length !== EXPERT_IMPORT_HEADERS.length || EXPERT_IMPORT_HEADERS.some((header, index) => headers[index] !== header)) {
+      throw new BadRequestException(`CSV 表头应为：${EXPERT_IMPORT_HEADERS.join('、')}`);
+    }
+    const dataRows = rows.slice(1);
+    if (!dataRows.length) throw new BadRequestException('CSV 文件没有可导入的数据');
+    if (dataRows.length > 1000) throw new BadRequestException('单次最多导入 1000 位专家');
+
+    const activePms = await this.prisma.projectManager.findMany({
+      where: { status: 'ACTIVE' },
+      select: { id: true, displayName: true },
+    });
+    const pmByName = new Map<string, Array<{ id: string }>>();
+    for (const pm of activePms) pmByName.set(pm.displayName.trim(), [...(pmByName.get(pm.displayName.trim()) ?? []), pm]);
+
+    let successCount = 0;
+    const errors: ExpertImportResult['errors'] = [];
+    for (let index = 0; index < dataRows.length; index += 1) {
+      const rowNumber = index + 2;
+      const cells = dataRows[index]!.map((cell) => cell.trim());
+      try {
+        if (cells.length > EXPERT_IMPORT_HEADERS.length) throw new BadRequestException('列数超过模板定义，请检查逗号或引号');
+        const [name, organizationName, professionalTitle, position, department, email, phone, idNumber, bankName, bankAccount, joinedOn, pmName] = cells;
+        if (!name) throw new BadRequestException('姓名不能为空');
+        const lengthLimits: Array<[string | undefined, string, number]> = [
+          [name, '姓名', 100], [organizationName, '单位', 200], [professionalTitle, '职称', 100],
+          [position, '职务', 100], [department, '专业/科室', 100], [phone, '手机', 30],
+          [idNumber, '身份证号码', 32], [bankName, '开户行', 200], [bankAccount, '银行账号', 64],
+        ];
+        for (const [value, label, max] of lengthLimits) {
+          if (value && value.length > max) throw new BadRequestException(`${label}不能超过 ${max} 个字符`);
+        }
+        if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new BadRequestException('邮箱格式不正确');
+
+        let formOwnerId = user.role === 'PM' ? user.projectManagerId : undefined;
+        if (user.role !== 'PM') {
+          if (!pmName) throw new BadRequestException('对接 PM 不能为空');
+          const matches = pmByName.get(pmName) ?? [];
+          if (!matches.length) throw new BadRequestException(`未找到在职 PM“${pmName}”`);
+          if (matches.length > 1) throw new BadRequestException(`PM 姓名“${pmName}”重复，无法唯一匹配`);
+          formOwnerId = matches[0]!.id;
+        }
+        if (!formOwnerId) throw new BadRequestException('当前 PM 账号未绑定 PM');
+
+        await this.create({
+          name,
+          organizationName: organizationName || undefined,
+          professionalTitle: professionalTitle || undefined,
+          position: position || undefined,
+          department: department || undefined,
+          email: email || undefined,
+          phone: phone || undefined,
+          idNumber: idNumber || undefined,
+          bankName: bankName || undefined,
+          bankAccount: bankAccount || undefined,
+          joinedOn: joinedOn ? normalizeImportDate(joinedOn, '入库时间') : undefined,
+          formOwnerId,
+        }, user.id, user);
+        successCount += 1;
+      } catch (error) {
+        const response = error && typeof error === 'object' && 'getResponse' in error
+          ? (error as { getResponse: () => string | { message?: string | string[] } }).getResponse()
+          : undefined;
+        const message = typeof response === 'string' ? response : Array.isArray(response?.message) ? response.message.join('；') : response?.message;
+        errors.push({ row: rowNumber, message: message ?? (error instanceof Error ? error.message : '导入失败') });
+      }
+    }
+    return { total: dataRows.length, successCount, failureCount: errors.length, errors };
   }
 
   async paymentDetails(id: string, actorUserId: string, user?: AuthUser) {

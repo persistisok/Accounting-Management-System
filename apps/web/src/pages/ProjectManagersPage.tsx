@@ -43,7 +43,7 @@ export function ProjectManagersPage() {
     },
   });
   const columns: TableColumn<ProjectManager>[] = [
-    { key: 'name', label: 'PM', render: (row) => <span className="pm-identity"><i>{row.displayName.slice(0, 1)}</i><span><strong>{row.displayName}</strong><small>项目经理</small></span></span> },
+    { key: 'name', label: 'PM', render: (row) => <span className="pm-identity"><span><strong>{row.displayName}</strong><small>项目经理</small></span></span> },
     { key: 'department', label: '所属部门', render: (row) => row.department || '—' },
     { key: 'projects', label: '关联项目', className: 'number', render: (row) => <strong>{row._count?.projects ?? 0}</strong> },
     { key: 'status', label: '状态', render: (row) => <span className={`status-chip ${row.status === 'ACTIVE' ? 'good' : 'neutral'}`}>{row.status === 'ACTIVE' ? '在用' : '已停用'}</span> },
@@ -60,7 +60,7 @@ export function ProjectManagersPage() {
   return <div className="page-enter">
     <PageHeader eyebrow="系统管理 / 业务人员" title="PM 管理" description="维护业务资料中的项目经理，不包含登录账号和密码。" action={<button className="button primary" onClick={() => setEditor('new')}><Plus size={17} />新增 PM</button>} />
     <div className="toolbar"><SearchBar value={q} onChange={(value) => { setQ(value); setPage(1); }} placeholder="搜索姓名或部门" /><span className="result-count">{managers.data?.total ?? 0} 位 PM</span></div>
-    <section className="panel table-panel">{managers.isLoading ? <LoadingState /> : managers.error ? <ErrorState error={managers.error} /> : <><DataTable columns={columns} rows={managers.data?.items ?? []} rowKey={(row) => row.id} /><Pagination page={page} total={managers.data?.total ?? 0} onPageChange={setPage} /></>}</section>
+    <section className="panel table-panel">{managers.isLoading ? <LoadingState /> : managers.error ? <ErrorState error={managers.error} /> : <><DataTable className="compact-default" columns={columns} rows={managers.data?.items ?? []} rowKey={(row) => row.id} /><Pagination page={page} total={managers.data?.total ?? 0} onPageChange={setPage} /></>}</section>
 
     <Modal open={Boolean(editor)} onClose={() => setEditor(null)} title={editing ? '编辑 PM' : '新增 PM'} description={editing ? '姓名变更会同步到已关联项目。' : '新增后可在项目、机构和业务资料中选择。'} size="large">
       <form className="form-grid" onSubmit={submit} key={editing?.id ?? 'new'}>

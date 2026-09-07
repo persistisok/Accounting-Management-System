@@ -19,7 +19,7 @@ export class ContractsService {
     const where: Prisma.ContractWhereInput = {
       ...(query.projectId ? { projectId: query.projectId } : {}),
       ...(query.status ? { status: query.status } : {}),
-      ...(user?.role === 'PM' ? { project: { pmUserId: user.projectManagerId ?? '__unbound_pm__' } } : {}),
+      ...contractScopeFor(user),
       ...(query.q ? { OR: [
         { project: { name: { contains: query.q, mode: 'insensitive' } } },
         { project: { projectCode: { contains: query.q, mode: 'insensitive' } } },
@@ -69,7 +69,7 @@ export class ContractsService {
 
   async update(id: string, dto: UpdateContractDto, actorUserId: string, user?: AuthUser) {
     const before = user?.role === 'PM'
-      ? await this.prisma.contract.findFirst({ where: { id, project: { pmUserId: user.projectManagerId ?? '__unbound_pm__' } } })
+      ? await this.prisma.contract.findFirst({ where: { id, ...contractScopeFor(user) } })
       : await this.prisma.contract.findUnique({ where: { id } });
     if (!before) throw new NotFoundException('合同不存在');
     if (before.status === 'VOID' || before.status === 'TERMINATED') throw new BadRequestException('已作废或终止的合同不能编辑');
@@ -106,7 +106,7 @@ export class ContractsService {
 
   async setStatus(id: string, status: ContractStatus, actorUserId: string, user?: AuthUser) {
     const before = user?.role === 'PM'
-      ? await this.prisma.contract.findFirst({ where: { id, project: { pmUserId: user.projectManagerId ?? '__unbound_pm__' } } })
+      ? await this.prisma.contract.findFirst({ where: { id, ...contractScopeFor(user) } })
       : await this.prisma.contract.findUnique({ where: { id } });
     if (!before) throw new NotFoundException('合同不存在');
     const contract = await this.prisma.contract.update({ where: { id }, data: { status, version: { increment: 1 } } });
@@ -119,9 +119,14 @@ export class ContractsService {
 
   private async validateRules(dto: { counterpartyId: string; projectId: string; contractType: ContractType; amount: string }, user?: AuthUser) {
     if (Number(dto.amount) <= 0) throw new BadRequestException('合同金额必须大于零');
-    if (user?.role === 'PM') {
-      const project = await this.prisma.project.findFirst({ where: { id: dto.projectId, pmUserId: user.projectManagerId ?? '__unbound_pm__' }, select: { id: true } });
-      if (!project) throw new NotFoundException('关联项目不存在或不属于当前 PM');
+    if (user?.role === 'PM' || user?.role === 'EXTERNAL') {
+      const project = await this.prisma.project.findFirst({
+        where: user.role === 'PM'
+          ? { id: dto.projectId, pmUserId: user.projectManagerId ?? '__unbound_pm__' }
+          : { id: dto.projectId, AND: { id: { in: user.projectIds } } },
+        select: { id: true },
+      });
+      if (!project) throw new NotFoundException('关联项目不存在或不在当前账号授权范围内');
     }
     const role = await this.prisma.organizationRole.findFirst({
       where: {
@@ -133,4 +138,10 @@ export class ContractsService {
     });
     if (!role) throw new BadRequestException(dto.contractType === 'SUPPORT' ? '请选择有效支持方' : '请选择有效执行方');
   }
+}
+
+function contractScopeFor(user?: AuthUser): Prisma.ContractWhereInput {
+  if (user?.role === 'PM') return { project: { pmUserId: user.projectManagerId ?? '__unbound_pm__' } };
+  if (user?.role === 'EXTERNAL') return { projectId: { in: user.projectIds } };
+  return {};
 }

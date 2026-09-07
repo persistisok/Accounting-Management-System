@@ -17,8 +17,8 @@ export class ContractsController {
   list(@Query() query: ContractListQueryDto, @CurrentUser() user: AuthUser) { return this.contracts.list(query, user); }
 
   @Post()
-  @Roles('SYSTEM_ADMIN', 'ADMIN', 'PM')
-  @RequirePermission('CONTRACTS', 'EDIT')
+  @Roles('SYSTEM_ADMIN', 'ADMIN', 'PM', 'EXTERNAL')
+  @RequirePermission('CONTRACTS', 'ENTRY')
   create(@Body() dto: CreateContractDto, @CurrentUser() user: AuthUser) {
     return this.contracts.create(dto, user.id, user);
   }

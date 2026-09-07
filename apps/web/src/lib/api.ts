@@ -58,6 +58,12 @@ export const api = {
     body.append('file', file);
     return request<T>(path, { method: 'POST', body });
   },
+  uploadForm: <T>(path: string, file: File, fields: Record<string, string>) => {
+    const body = new FormData();
+    body.append('file', file);
+    Object.entries(fields).forEach(([key, value]) => body.append(key, value));
+    return request<T>(path, { method: 'POST', body });
+  },
   download,
 };
 

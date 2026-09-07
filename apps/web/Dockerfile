@@ -16,6 +16,7 @@ COPY apps/web/package.json apps/web/package.json
 RUN npm ci
 
 COPY apps/web apps/web
+COPY img/logo.jpg img/logo.jpg
 RUN npm run build -w @ledger/web
 
 FROM nginx:1.27-alpine

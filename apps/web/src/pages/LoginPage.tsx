@@ -1,5 +1,6 @@
 import { type FormEvent, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
+import { BrandLogo } from '../components/BrandLogo';
 import { useAuth } from '../lib/auth';
 
 export function LoginPage() {
@@ -25,7 +26,7 @@ export function LoginPage() {
     <main className="login-page">
       <section className="login-form-panel">
         <form onSubmit={submit} className="login-form">
-          <div className="login-brand"><span className="brand-mark">账</span><strong>项目账册</strong></div>
+          <div className="login-brand"><BrandLogo /><strong>PMS 项目管理系统</strong></div>
           <h1>登录</h1>
           <label><span>用户名</span><input name="username" autoComplete="username" required autoFocus /></label>
           <label><span>密码</span><input name="password" type="password" autoComplete="current-password" required /></label>

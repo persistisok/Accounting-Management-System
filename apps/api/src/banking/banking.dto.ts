@@ -1,10 +1,17 @@
 import { AllocationCategory, RecordStatus, TransactionDirection } from '@prisma/client';
-import { IsEnum, IsIn, IsNumberString, IsOptional, IsString, IsUUID, Matches, MaxLength } from 'class-validator';
+import { IsDateString, IsEnum, IsIn, IsNumberString, IsOptional, IsString, IsUUID, Matches, MaxLength } from 'class-validator';
 import { ListQueryDto } from '../common/query.dto';
 
 export class TransactionListQueryDto extends ListQueryDto {
   @IsOptional() @IsEnum(TransactionDirection) direction?: TransactionDirection;
   @IsOptional() @IsString() matchStatus?: string;
+  @IsOptional() @IsIn(['SUPPORT_RECEIPT', 'MEMBER_DUE', 'EXECUTION_PAYMENT', 'EXPERT_FEE']) category?: AllocationCategory;
+  @IsOptional() @IsUUID() projectId?: string;
+  @IsOptional() @IsUUID() expertProfileId?: string;
+  @IsOptional() @IsUUID() membershipId?: string;
+  @IsOptional() @IsDateString() transactionFrom?: string;
+  @IsOptional() @IsDateString() transactionTo?: string;
+  @IsOptional() @IsIn(['ACTIVE', 'VOID']) transactionStatus?: 'ACTIVE' | 'VOID';
 }
 
 export class BankAccountListQueryDto extends ListQueryDto {}
@@ -48,4 +55,9 @@ export class UpdateTransactionDto {
   @IsOptional() @IsEnum(TransactionDirection) direction?: TransactionDirection;
   @IsOptional() @IsNumberString() amount?: string;
   @IsOptional() @IsString() @MaxLength(100) nature?: string;
+}
+
+export class ProjectExpertFeeImportDto {
+  @IsUUID() bankAccountId!: string;
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: '支付日期格式必须为年-月-日' }) transactionDate!: string;
 }

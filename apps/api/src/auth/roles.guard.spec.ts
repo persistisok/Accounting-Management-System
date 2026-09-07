@@ -22,7 +22,7 @@ describe('RolesGuard', () => {
 
   it('rejects a role outside the configured set', () => {
     const reflector = { getAllAndOverride: vi.fn((key: string) => key === ROLES_KEY ? ['ADMIN'] : undefined) } as unknown as Reflector;
-    expect(() => new RolesGuard(reflector).canActivate(context('GUEST'))).toThrow(ForbiddenException);
+    expect(() => new RolesGuard(reflector).canActivate(context('EXTERNAL'))).toThrow(ForbiddenException);
   });
 
   it('enforces configured module permission levels for ordinary administrators', () => {

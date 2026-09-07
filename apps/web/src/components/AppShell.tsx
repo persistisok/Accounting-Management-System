@@ -1,44 +1,69 @@
 import {
   BookOpenText, BriefcaseBusiness, Building2, ChartNoAxesCombined, ChevronLeft, FileSignature,
-  KeyRound, Landmark, LogOut, Menu, ReceiptText, Search, ShieldCheck, UserRoundCog, UsersRound, X,
+  HandCoins, KeyRound, Landmark, LogOut, Menu, ReceiptText, ScrollText, Search, ShieldCheck, UserRoundCog, UsersRound, X,
 } from 'lucide-react';
 import { useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { BrandLogo } from './BrandLogo';
 import { useAuth } from '../lib/auth';
 import { hasPermission } from '../lib/permissions';
 import type { PermissionResource } from '../lib/types';
 
-const groups: { label: string; items: { to: string; label: string; icon: typeof BriefcaseBusiness; resource: PermissionResource }[] }[] = [
+interface NavItem {
+  to?: string;
+  label: string;
+  icon: typeof BriefcaseBusiness;
+  resource?: PermissionResource;
+  children?: Array<{ to: string; label: string }>;
+}
+
+const groups: { label: string; items: NavItem[] }[] = [
   { label: '项目管理', items: [
     { to: '/project-overview', label: '项目全览', icon: ChartNoAxesCombined, resource: 'PROJECTS' },
     { to: '/projects', label: '项目台账', icon: BriefcaseBusiness, resource: 'PROJECTS' },
   ] },
   { label: '业务台账', items: [
     { to: '/contracts', label: '合同台账', icon: FileSignature, resource: 'CONTRACTS' },
-    { to: '/banking', label: '银行日记账', icon: Landmark, resource: 'BANKING' },
-    { to: '/invoices', label: '发票台账', icon: ReceiptText, resource: 'INVOICES' },
+    { label: '银行日记账', icon: Landmark, resource: 'BANKING', children: [
+      { to: '/banking/support-income', label: '支持款收入' },
+      { to: '/banking/member-dues', label: '会费收入' },
+      { to: '/banking/execution-payment', label: '执行款支出' },
+      { to: '/banking/expert-fee', label: '专家费支出' },
+    ] },
+    { label: '发票台账', icon: ReceiptText, resource: 'INVOICES', children: [
+      { to: '/invoices/support-income', label: '支持款收入票据' },
+      { to: '/invoices/member-dues', label: '会费收入票据' },
+      { to: '/invoices/execution-payment', label: '执行款支出票据' },
+      { to: '/invoices/expert-fee', label: '专家费支出票据' },
+    ] },
+    { to: '/donation-receipts', label: '捐赠票据台账', icon: HandCoins, resource: 'DONATION_RECEIPTS' },
   ] },
   { label: '基础资料', items: [
     { to: '/supporters', label: '支持方库', icon: Building2, resource: 'SUPPORTERS' },
     { to: '/executors', label: '执行方库', icon: BookOpenText, resource: 'EXECUTORS' },
     { to: '/experts', label: '专家库', icon: ShieldCheck, resource: 'EXPERTS' },
-    { to: '/members', label: '会员库', icon: UsersRound, resource: 'MEMBERS' },
+    { label: '会员库', icon: UsersRound, resource: 'MEMBERS', children: [
+      { to: '/members/committees', label: '专委会' },
+      { to: '/members/list', label: '会员' },
+    ] },
   ] },
 ];
 
 export function AppShell() {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [openNavParent, setOpenNavParent] = useState('');
   const [search, setSearch] = useState('');
   const { user, logout } = useAuth();
   const navigate = useNavigate();
-  const systemItems = user?.role === 'SYSTEM_ADMIN'
+  const systemItems: NavItem[] = user?.role === 'SYSTEM_ADMIN'
     ? [
       { to: '/project-managers', label: 'PM 管理', icon: UserRoundCog },
       { to: '/accounts', label: '账号管理', icon: KeyRound },
+      { to: '/audit-logs', label: '操作日志', icon: ScrollText },
     ]
     : [];
   const businessGroups = groups
-    .map((group) => ({ ...group, items: group.items.filter((item) => hasPermission(user, item.resource, 'VIEW')) }))
+    .map((group) => ({ ...group, items: group.items.filter((item) => item.resource && hasPermission(user, item.resource, 'VIEW')) }))
     .filter((group) => group.items.length);
   const visibleGroups = systemItems.length ? [...businessGroups, { label: '系统管理', items: systemItems }] : businessGroups;
 
@@ -51,23 +76,23 @@ export function AppShell() {
     <div className="app-shell">
       <aside className={`sidebar ${menuOpen ? 'open' : ''}`}>
         <div className="brand">
-          <span className="brand-mark">账</span>
-          <span><strong>项目账册</strong><small>业务数据中枢</small></span>
+          <BrandLogo />
+          <span><strong>PMS</strong><small>项目管理系统</small></span>
           <button className="sidebar-close" onClick={() => setMenuOpen(false)} aria-label="关闭导航"><X size={19} /></button>
         </div>
         <nav>{visibleGroups.map((group) => (
           <section className="nav-group" key={group.label}>
             <p>{group.label}</p>
-            {group.items.map(({ to, label, icon: Icon }) => (
-              <NavLink key={to} to={to} onClick={() => setMenuOpen(false)}>
-                <Icon size={18} strokeWidth={1.8} /><span>{label}</span><ChevronLeft className="nav-arrow" size={14} />
-              </NavLink>
-            ))}
+            {group.items.map(({ to, label, icon: Icon, children }) => children ? <div className={`nav-parent${openNavParent === label ? ' open' : ''}`} key={label}>
+              <button type="button" className="nav-parent-label" aria-expanded={openNavParent === label} onClick={() => setOpenNavParent((open) => open === label ? '' : label)}><Icon size={18} strokeWidth={1.8} /><span>{label}</span><ChevronLeft className="nav-parent-arrow" size={14} /></button>
+              {openNavParent === label && <div className="nav-children">{children.map((child) => <NavLink key={child.to} to={child.to} onClick={() => setMenuOpen(false)}><span>{child.label}</span><ChevronLeft className="nav-arrow" size={13} /></NavLink>)}</div>}
+            </div> : <NavLink key={to} to={to!} onClick={() => setMenuOpen(false)}>
+              <Icon size={18} strokeWidth={1.8} /><span>{label}</span><ChevronLeft className="nav-arrow" size={14} />
+            </NavLink>)}
           </section>
         ))}</nav>
         <div className="sidebar-foot">
-          <span className="user-avatar">{user?.displayName.slice(0, 1)}</span>
-          <span><strong>{user?.displayName}</strong><small>{user?.role === 'SYSTEM_ADMIN' ? '系统管理员' : user?.role === 'ADMIN' ? '普通管理员' : user?.role === 'PM' ? 'PM' : '访客'}</small></span>
+          <span><strong>{user?.displayName}</strong><small>{user?.role === 'SYSTEM_ADMIN' ? '系统管理员' : user?.role === 'ADMIN' ? '运营管理员' : user?.role === 'PM' ? 'PM' : '第三方外部'}</small></span>
           <button onClick={logout} aria-label="退出登录"><LogOut size={17} /></button>
         </div>
       </aside>

@@ -3,11 +3,13 @@ import { ArchiveStatus, ContractStatus, InvoiceDirection, InvoiceStatus, Prisma,
 import { randomInt } from 'node:crypto';
 import { AuditService } from '../audit/audit.service';
 import { attachmentMap } from '../attachments/attachment-view';
+import { LedgerAttachmentsService } from '../attachments/ledger-attachments.service';
 import type { AuthUser } from '../common/current-user.decorator';
 import { roundMoney } from '../common/money';
 import { PrismaService } from '../prisma.service';
 import { CreateProjectDto, ProjectListQueryDto, ProjectPeriodUnit, UpdateProjectDto } from './projects.dto';
 import { ProjectReviewDecision } from './projects.dto';
+import { blockingArchiveItemKeys } from '../project-archive/archive-checklist';
 
 export interface FinancialSummary {
   receivableAmount: string;
@@ -17,6 +19,8 @@ export interface FinancialSummary {
   payableExecutionAmount: string;
   paidExecutionAmount: string;
   paidExpertAmount: string;
+  memberDueReceivedAmount: string;
+  memberDueInvoicedAmount: string;
   unreceivedAmount: string;
   uninvoicedAmount: string;
   unpaidExecutionAmount: string;
@@ -25,6 +29,7 @@ export interface FinancialSummary {
 const emptySummary = (): FinancialSummary => ({
   receivableAmount: '0.00', receivedAmount: '0.00', invoicedAmount: '0.00', receivedInvoiceAmount: '0.00',
   payableExecutionAmount: '0.00', paidExecutionAmount: '0.00', paidExpertAmount: '0.00',
+  memberDueReceivedAmount: '0.00', memberDueInvoicedAmount: '0.00',
   unreceivedAmount: '0.00', uninvoicedAmount: '0.00', unpaidExecutionAmount: '0.00',
 });
 
@@ -64,6 +69,7 @@ export function buildProjectWhere(query: ProjectListQueryDto): Prisma.ProjectWhe
     ...(query.platform ? { platform: query.platform } : {}),
     ...(query.nature ? { nature: query.nature } : {}),
     ...(query.projectType ? { projectType: query.projectType } : {}),
+    ...(query.pmUserId ? { pmUserId: query.pmUserId } : {}),
     ...((query.publishedFrom || query.publishedTo) ? {
       publishedOn: {
         ...(query.publishedFrom ? { gte: new Date(query.publishedFrom) } : {}),
@@ -81,8 +87,10 @@ export function buildProjectWhere(query: ProjectListQueryDto): Prisma.ProjectWhe
   };
 }
 
-export function projectScopeFor(user: Pick<AuthUser, 'role' | 'projectManagerId'>): Prisma.ProjectWhereInput {
-  return user.role === 'PM' ? { pmUserId: user.projectManagerId ?? '__unbound_pm__' } : {};
+export function projectScopeFor(user: Pick<AuthUser, 'role' | 'projectManagerId' | 'projectIds'>): Prisma.ProjectWhereInput {
+  if (user.role === 'PM') return { pmUserId: user.projectManagerId ?? '__unbound_pm__' };
+  if (user.role === 'EXTERNAL') return { id: { in: user.projectIds } };
+  return {};
 }
 
 export function validateStatusRequest(current: ProjectStatus, reviewState: ProjectReviewState | null, requested: ProjectStatus) {
@@ -99,16 +107,23 @@ export function validateArchiveRequest(status: ProjectStatus, archiveStatus: Arc
   if (reviewState === ProjectReviewState.PENDING) throw new BadRequestException('该项目已有待复核的归档申请');
 }
 
+export function validateArchiveChecklistCompletion(approvedItems: number) {
+  if (approvedItems !== blockingArchiveItemKeys.length) {
+    throw new BadRequestException(`归档清单尚未全部通过（${approvedItems}/${blockingArchiveItemKeys.length}）`);
+  }
+}
+
 @Injectable()
 export class ProjectsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly attachments: LedgerAttachmentsService,
   ) {}
 
   async list(query: ProjectListQueryDto, user: AuthUser) {
     const where = { ...buildProjectWhere(query), ...projectScopeFor(user) };
-    const [items, total] = await this.prisma.$transaction([
+    const [items, total, projectTotals, supportAgreementTotals, receivedTotals] = await this.prisma.$transaction([
       this.prisma.project.findMany({
         where,
         include: { pm: { select: { id: true, displayName: true } }, ...reviewRelations },
@@ -117,6 +132,15 @@ export class ProjectsService {
         take: query.pageSize,
       }),
       this.prisma.project.count({ where }),
+      this.prisma.project.aggregate({ where, _sum: { approvedAmount: true } }),
+      this.prisma.contract.aggregate({
+        where: { status: ContractStatus.SIGNED, contractType: 'SUPPORT', project: where },
+        _sum: { amount: true },
+      }),
+      this.prisma.bankAllocation.aggregate({
+        where: { status: 'CONFIRMED', category: 'SUPPORT_RECEIPT', project: where },
+        _sum: { allocatedAmount: true },
+      }),
     ]);
     const ids = items.map((item) => item.id);
     const [summaries, attachments] = await Promise.all([
@@ -130,6 +154,11 @@ export class ProjectsService {
         attachments: attachments[item.id] ?? [],
       })),
       total,
+      totals: {
+        approvedAmount: roundMoney(Number(projectTotals._sum.approvedAmount ?? 0)),
+        supportAgreementAmount: roundMoney(Number(supportAgreementTotals._sum.amount ?? 0)),
+        receivedAmount: roundMoney(Number(receivedTotals._sum.allocatedAmount ?? 0)),
+      },
     };
   }
 
@@ -143,15 +172,17 @@ export class ProjectsService {
 
   async filterOptions(user: AuthUser) {
     const where = projectScopeFor(user);
-    const [platforms, natures, projectTypes] = await this.prisma.$transaction([
+    const [platforms, natures, projectTypes, projectManagers] = await this.prisma.$transaction([
       this.prisma.project.findMany({ where, distinct: ['platform'], select: { platform: true }, orderBy: { platform: 'asc' } }),
       this.prisma.project.findMany({ where, distinct: ['nature'], select: { nature: true }, orderBy: { nature: 'asc' } }),
       this.prisma.project.findMany({ where, distinct: ['projectType'], select: { projectType: true }, orderBy: { projectType: 'asc' } }),
+      this.prisma.project.findMany({ where, distinct: ['pmUserId'], select: { pm: { select: { id: true, displayName: true } } }, orderBy: { pmName: 'asc' } }),
     ]);
     return {
       platforms: platforms.map((item) => item.platform),
       natures: natures.map((item) => item.nature),
       projectTypes: projectTypes.map((item) => item.projectType),
+      projectManagers: projectManagers.map((item) => item.pm).filter((item): item is NonNullable<typeof item> => Boolean(item)),
     };
   }
 
@@ -163,8 +194,24 @@ export class ProjectsService {
         ...reviewRelations,
         contracts: { include: { counterparty: true }, orderBy: { signedOn: 'desc' } },
         invoices: { orderBy: { issuedOn: 'desc' } },
+        donationReceipts: { include: { donor: { select: { id: true, organizationCode: true, name: true } } }, orderBy: { issuedOn: 'desc' } },
         allocations: {
-          include: { bankTransaction: true, expertProfile: { include: { person: true } } },
+          include: {
+            bankTransaction: {
+              select: {
+                id: true, transactionAt: true, counterpartyName: true, counterpartyBankName: true,
+                counterpartyAccountMasked: true, amount: true, nature: true, matchStatus: true,
+                settlementApplicable: true,
+                bankAccount: { select: { bankName: true, accountNumberMasked: true } },
+              },
+            },
+            expertProfile: {
+              select: { id: true, professionalTitle: true, person: { select: { name: true } } },
+            },
+            memberDue: {
+              select: { id: true, dueCode: true, periodLabel: true, membership: { select: { id: true, memberName: true, committee: { select: { name: true } } } } },
+            },
+          },
           orderBy: { createdAt: 'desc' },
         },
       },
@@ -178,6 +225,7 @@ export class ProjectsService {
   }
 
   async create(dto: CreateProjectDto, actorUserId: string, user?: AuthUser) {
+    if (user?.role === 'EXTERNAL') throw new BadRequestException('第三方外部账号不能新建项目');
     const { periodValue, periodUnit, pmUserId: requestedPmId, platformAbbreviation: requestedAbbreviation, ...projectData } = dto;
     const pmUserId = user?.role === 'PM' ? user.projectManagerId : requestedPmId;
     if (!pmUserId) throw new BadRequestException('PM 账号必须绑定 PM');
@@ -248,6 +296,69 @@ export class ProjectsService {
     return { ...project, financialSummary, attachments: attachments[id] ?? [] };
   }
 
+  async remove(id: string, actorUserId: string) {
+    const project = await this.prisma.project.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        projectCode: true,
+        name: true,
+        archiveItems: { select: { id: true } },
+        contracts: { select: { id: true, status: true } },
+        allocations: { select: { id: true, status: true } },
+        invoices: { select: { id: true, status: true } },
+        donationReceipts: { select: { id: true, status: true } },
+        _count: { select: { candidates: true } },
+      },
+    });
+    if (!project) throw new NotFoundException('项目不存在');
+    const attachmentObjectIds = [id, ...project.archiveItems.map((item) => item.id)];
+    const attachmentCount = await this.prisma.attachment.count({
+      where: {
+        OR: [
+          { objectType: 'PROJECT', objectId: id },
+          { objectType: 'PROJECT_ARCHIVE_ITEM', objectId: { in: attachmentObjectIds } },
+        ],
+      },
+    });
+    const activeContracts = project.contracts.filter((item) => item.status !== ContractStatus.VOID);
+    const activeAllocations = project.allocations.filter((item) => item.status !== 'REVERSED');
+    const activeInvoices = project.invoices.filter((item) => item.status !== InvoiceStatus.VOID);
+    const activeDonationReceipts = project.donationReceipts.filter((item) => item.status !== 'VOID');
+    if (activeContracts.length || activeAllocations.length || activeInvoices.length || activeDonationReceipts.length || project._count.candidates || attachmentCount) {
+      throw new BadRequestException('该项目仍有未作废的合同、流水分配、发票、捐赠票据、执行方候选或项目附件，不能删除');
+    }
+    const disposableObjects = [
+      ...project.contracts.map((item) => ({ objectType: 'CONTRACT' as const, objectId: item.id })),
+      ...project.invoices.map((item) => ({ objectType: 'INVOICE' as const, objectId: item.id })),
+      ...project.donationReceipts.map((item) => ({ objectType: 'DONATION_RECEIPT' as const, objectId: item.id })),
+    ];
+    const deletedAttachmentCount = await this.attachments.removeForObjects(disposableObjects, actorUserId);
+    const [deletedContracts, deletedAllocations, deletedInvoices, deletedDonationReceipts, deleted] = await this.prisma.$transaction([
+      this.prisma.contract.deleteMany({ where: { projectId: id, status: ContractStatus.VOID } }),
+      this.prisma.bankAllocation.deleteMany({ where: { projectId: id, status: 'REVERSED' } }),
+      this.prisma.invoice.deleteMany({ where: { projectId: id, status: InvoiceStatus.VOID } }),
+      this.prisma.donationReceipt.deleteMany({ where: { projectId: id, status: 'VOID' } }),
+      this.prisma.project.delete({ where: { id } }),
+    ]);
+    await this.audit.record({
+      actorUserId,
+      action: 'DELETE',
+      objectType: 'PROJECT',
+      objectId: id,
+      beforeData: {
+        projectCode: project.projectCode,
+        name: project.name,
+        deletedVoidContracts: deletedContracts.count,
+        deletedReversedAllocations: deletedAllocations.count,
+        deletedVoidInvoices: deletedInvoices.count,
+        deletedVoidDonationReceipts: deletedDonationReceipts.count,
+        deletedAttachments: deletedAttachmentCount,
+      },
+    });
+    return deleted;
+  }
+
   async requestStatus(id: string, status: ProjectStatus, user: AuthUser) {
     const project = await this.prisma.project.findFirst({
       where: { id, ...projectScopeFor(user) },
@@ -311,6 +422,10 @@ export class ProjectsService {
     });
     if (!project) throw new NotFoundException('项目不存在');
     validateArchiveRequest(project.status, project.archiveStatus, project.archiveReviewState);
+    const approvedItems = await this.prisma.projectArchiveItem.count({
+      where: { projectId: id, itemKey: { in: blockingArchiveItemKeys }, status: 'APPROVED' },
+    });
+    validateArchiveChecklistCompletion(approvedItems);
     const updated = await this.prisma.project.update({
       where: { id },
       data: {
@@ -370,7 +485,7 @@ export class ProjectsService {
       })),
       ...project.allocations.filter((item) => item.status === 'CONFIRMED').map((item) => ({
         id: item.id, date: item.bankTransaction.transactionAt, type: 'PAYMENT',
-        label: item.category === 'SUPPORT_RECEIPT' ? '收到支持款' : item.category === 'EXPERT_FEE' ? '支付专家费' : '支付执行款',
+        label: item.category === 'SUPPORT_RECEIPT' ? '收到支持款' : item.category === 'MEMBER_DUE' ? '收到会费' : item.category === 'EXPERT_FEE' ? '支付专家费' : '支付执行款',
         amount: item.allocatedAmount,
       })),
       ...project.invoices.filter((item) => item.status === 'NORMAL').map((item) => ({
@@ -407,7 +522,7 @@ export class ProjectsService {
       }),
       this.prisma.invoice.findMany({
         where: { projectId: { in: projectIds }, status: InvoiceStatus.NORMAL },
-        select: { projectId: true, direction: true, kind: true, totalAmount: true },
+        select: { projectId: true, category: true, direction: true, kind: true, totalAmount: true },
       }),
     ]);
     const numeric: Record<string, Record<string, number>> = {};
@@ -419,12 +534,15 @@ export class ProjectsService {
     for (const item of allocations) {
       if (!item.projectId) continue;
       const key = item.category === 'SUPPORT_RECEIPT' ? 'received'
+        : item.category === 'MEMBER_DUE' ? 'memberDueReceived'
         : item.category === 'EXECUTION_PAYMENT' ? 'paidExecution'
           : item.category === 'EXPERT_FEE' ? 'paidExpert' : null;
       if (key) numeric[item.projectId]![key] = (numeric[item.projectId]![key] ?? 0) + Number(item.allocatedAmount);
     }
     for (const item of invoices) {
-      const key = item.direction === InvoiceDirection.RECEIVED ? 'receivedInvoice' : 'invoiced';
+      if (!item.projectId) continue;
+      const key = item.category === 'MEMBER_DUE_ISSUED' ? 'memberDueInvoiced'
+        : item.direction === InvoiceDirection.RECEIVED ? 'receivedInvoice' : 'invoiced';
       numeric[item.projectId]![key] = (numeric[item.projectId]![key] ?? 0)
         + Number(item.totalAmount) * (item.kind === 'RED' ? -1 : 1);
     }
@@ -443,6 +561,8 @@ export class ProjectsService {
         payableExecutionAmount: roundMoney(payable),
         paidExecutionAmount: roundMoney(paidExecution),
         paidExpertAmount: roundMoney(row.paidExpert ?? 0),
+        memberDueReceivedAmount: roundMoney(row.memberDueReceived ?? 0),
+        memberDueInvoicedAmount: roundMoney(row.memberDueInvoiced ?? 0),
         unreceivedAmount: roundMoney(receivable - received),
         uninvoicedAmount: roundMoney(received - invoiced),
         unpaidExecutionAmount: roundMoney(payable - paidExecution),

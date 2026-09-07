@@ -5,6 +5,9 @@ import { ListQueryDto } from '../common/query.dto';
 export class ExpertListQueryDto extends ListQueryDto {
   @IsOptional() @IsEnum(ReviewStatus) reviewStatus?: ReviewStatus;
   @IsOptional() @IsEnum(RecordStatus) status?: RecordStatus;
+  @IsOptional() @IsUUID() pmUserId?: string;
+  @IsOptional() @IsDateString() paymentFrom?: string;
+  @IsOptional() @IsDateString() paymentTo?: string;
 }
 
 export class UpdateExpertDto {

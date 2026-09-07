@@ -21,6 +21,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       select: {
         id: true, username: true, displayName: true, role: true, projectManagerId: true, status: true,
         permissions: { select: { resource: true, level: true } },
+        projectScopes: { select: { projectId: true } },
       },
     });
     if (!user || user.status !== 'ACTIVE') throw new UnauthorizedException('账号已停用');
@@ -30,6 +31,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       displayName: user.displayName,
       role: user.role,
       projectManagerId: user.projectManagerId,
+      projectIds: user.projectScopes.map((scope) => scope.projectId),
       permissions: user.permissions,
     };
   }

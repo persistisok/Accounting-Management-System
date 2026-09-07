@@ -5,7 +5,7 @@ import { defaultPath, hasPermission } from './permissions';
 function user(overrides: Partial<User>): User {
   return {
     id: 'user-1', username: 'user', displayName: '用户', role: 'ADMIN', projectManagerId: null,
-    status: 'ACTIVE', createdAt: '', updatedAt: '', permissions: [], ...overrides,
+    status: 'ACTIVE', createdAt: '', updatedAt: '', permissions: [], projectIds: [], ...overrides,
   };
 }
 
@@ -18,14 +18,15 @@ describe('frontend account permissions', () => {
     expect(hasPermission(admin, 'PROJECTS', 'VIEW')).toBe(false);
   });
 
-  it('gives PM accounts their own ledgers and configurable library permissions', () => {
+  it('uses configured entry and view permissions for PM accounts', () => {
     const pm = user({ role: 'PM', projectManagerId: 'pm-1' });
-    expect(hasPermission(pm, 'PROJECTS', 'VIEW')).toBe(true);
-    expect(hasPermission(pm, 'PROJECTS', 'EDIT')).toBe(true);
-    expect(hasPermission(pm, 'CONTRACTS', 'VIEW')).toBe(true);
-    expect(hasPermission(pm, 'BANKING', 'EDIT')).toBe(true);
+    expect(hasPermission(pm, 'PROJECTS', 'VIEW')).toBe(false);
+    const entryPm = { ...pm, permissions: [{ resource: 'PROJECTS', level: 'ENTRY' }] } as User;
+    expect(hasPermission(entryPm, 'PROJECTS', 'VIEW')).toBe(true);
+    expect(hasPermission(entryPm, 'PROJECTS', 'ENTRY')).toBe(true);
+    expect(hasPermission(entryPm, 'PROJECTS', 'EDIT')).toBe(false);
     expect(hasPermission(pm, 'EXPERTS', 'VIEW')).toBe(false);
     expect(hasPermission({ ...pm, permissions: [{ resource: 'EXPERTS', level: 'VIEW' }] }, 'EXPERTS', 'VIEW')).toBe(true);
-    expect(defaultPath(pm)).toBe('/projects');
+    expect(defaultPath(entryPm)).toBe('/projects');
   });
 });
