@@ -131,7 +131,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .toolbar-select .control { background: white; height: 40px; min-height: 40px; padding-block: 0; }
 .invoice-toolbar { align-items: flex-start; position: relative; z-index: 20; }
 .invoice-filter-popover { width: min(100%, 540px); }
-.donation-summary-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .audit-filter-popover { width: min(100%, 560px); }
 .audit-time { color: var(--ink-soft); font-family: var(--data); font-size: 10px; white-space: nowrap; }
 .audit-action { background: #e9f3f0; border: 1px solid #d0e3dd; border-radius: 6px; color: var(--pine); display: inline-flex; font-size: 10px; font-weight: 750; padding: 5px 8px; white-space: nowrap; }
